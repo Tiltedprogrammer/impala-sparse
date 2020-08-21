@@ -1,0 +1,36 @@
+struct CSR{
+    N : u32, //cols
+    M : u32, //rows
+    nnz : u32, //number of nonzero elements
+    values : &mut[f32], //row-major
+    cols : &mut[u32],
+    row_index : &mut[u32]
+}
+
+//Won't work fow now
+// trait<T> Semiring{
+    // fn zero() -> T,
+    // fn one() -> T,
+    // fn plus(T,T) -> T,
+    // fn multiply(T,T) ->T
+// }
+
+// impl Semiring[float] ...
+// Matrix[Semiring] ...
+
+
+
+extern fn get_nnz(cst : &CSR) -> u32 {
+    (*cst).nnz
+}
+
+
+
+// fn spGEMM(lhs : &CSR, rhs : &CSR) -> CSR {
+    // CSR{}
+// }
+
+//multiply matrices //
+//compute C.Rows
+//prefix sum
+//compute values

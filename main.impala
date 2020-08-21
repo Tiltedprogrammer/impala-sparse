@@ -1,0 +1,10 @@
+extern "C" {
+    fn print_string2(&[u8]) -> ();
+}
+
+
+
+
+fn main() -> (){
+    print_string2("string");
+}

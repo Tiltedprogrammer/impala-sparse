@@ -1,0 +1,4 @@
+/build
+*.out
+*.code-workspace
+matrix_data/*
