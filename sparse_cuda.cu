@@ -1,14 +1,17 @@
 #include <stdio.h>
 
-#include <thrust/scan.h>
-#include <thrust/execution_policy.h>
-
 #include "cuda_sparse_wrappers.h"
 
 #include <cuda_runtime.h> // cudaMalloc, cudaMemcpy, etc.
 #include <cusparse.h>   
 #include "cuda_helpers.h"
 
+//implement scan?
+extern "C"{
+    void prefixSum(unsigned int * csrOffsetsStart,unsigned int csrOffsetsEnd) {
+        thrust::inclusive_scan(thrust::device, csrOffsetsStart, csrOffsetsStart + csrOffsetsEnd, csrOffsetsStart); // in-place scan
+    }
+}
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -29,64 +32,30 @@ __device__ int min_(int l, int r){
     }
 }
 
-// struct CSR {
-//     unsigned int N;
-//     unsigned int M;
-//     unsigned int nnz;
-//     float * values;
-//     unsigned int * cols;
-//     unsigned int * row_index;
-// };
+
+__device__ int getGlobalIdx_2D_1D(){
+    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+    return threadId;
+    }
 
 //think about minimum
 //SHUFFLE UP OR make all threads run through for
 __device__ int WarpMin (unsigned int mask,int value, int laneId ){
-    //mask performs conversion, offset through threads in the mask
-    // initial offset equals the distance to closest 1
-    //  int dist1 = __ffs(mask) - 1; //number of bits until first 1 inclusive, i.e. ffs(1) == 1
-    //  int mask_without_one = mask ^ (1 << dist1); //laneId to mask = 1 << laneId;
-    //  int dist2 = __ffs(mask_without_one) - 1;
-    //  calculate distance between 10010100 and 00000001 should be 2, x xor laneId = mask_without_one
-    // printf("LaneId=%i, log=%i\n",laneId,(int)(log2f(__popc(mask)) + 1)); 
-    // for (int offset = 1; offset < 32; offset *=2)
-    //  if((laneId) ^ offset >= __popc(mask)){
-        // value = min_(value,__shfl_down_sync(mask, value, 0));    
-    //  }else{
-        // value = min_(value,__shfl_down_sync(mask, value, offset,1 << (int)(log2f(__popc(mask)) + 1)));    
-    //  }
-    //  value = min_(value,__shfl_xor_sync(mask, value, offset));
-     //offset shoul be 0 for the last lane
         for (int offset = 16; offset > 0; offset/=2)
         value = min_(value,__shfl_up_sync(mask, value, offset));
      return value ;
 }
 
 __device__ int WarpMax (unsigned int mask,int value){
-    //mask performs conversion, offset through threads in the mask
-    // initial offset equals the distance to closest 1
-    //  int dist1 = __ffs(mask) - 1; //number of bits until first 1 inclusive, i.e. ffs(1) == 1
-    //  int mask_without_one = mask ^ (1 << dist1); //laneId to mask = 1 << laneId;
-    //  int dist2 = __ffs(mask_without_one) - 1;
-    //  calculate distance between 10010100 and 00000001 should be 2, x xor laneId = mask_without_one
-     for (int offset = 8; offset > 0; offset *=2)
-    //  value = max(value,__shfl_xor_sync(mask, value, offset));
-     //offset shoul be 0 for the last lane
+    
+    for (int offset = 8; offset > 0; offset *=2)
+    
     value = max(value,__shfl_down_sync(mask, value, offset));
      return value ;
 }
 
 __device__ float WarpSum (unsigned int mask,float value, int laneId){
-    //mask performs conversion, offset through threads in the mask
-    // initial offset equals the distance to closest 1
-    //  int dist1 = __ffs(mask) - 1; //number of bits until first 1 inclusive, i.e. ffs(1) == 1
-    //  int mask_without_one = mask ^ (1 << dist1); //laneId to mask = 1 << laneId;
-    //  int dist2 = __ffs(mask_without_one) - 1;
-    //  calculate distance between 10010100 and 00000001 should be 2, x xor laneId = mask_without_one
-    //  for (int offset = 16; offset > 0; offset /=2)
-    // for(int offset = 1; offset < 32; offset *= 2)/
-    //  value += __shfl_xor_sync(mask, value, offset);
-     //offset shoul be 0 for the last lane
-    // value += __shfl_down_sync(mask, value, offset);
     for (int offset = 16; offset > 0; offset/=2) 
         value += __shfl_down_sync(mask, value, offset);
      return value ;
@@ -114,57 +83,65 @@ __device__ int nextLaneId(int laneId, unsigned int mask){
 __global__ void preproccessRows(struct CSR a, struct CSR b, struct CSR c){
     
     #define FULL_MASK 0xffffffff
+
+    int threadId = getGlobalIdx_2D_1D();
     
-    int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / 32; //is rowId
+    int warpId = threadId / 32; //is rowId
     int laneId = threadIdx.x % 32;
 
-    int aStart = a.row_index[warpId];
-    int aEnd = a.row_index[warpId + 1];
+    if(warpId < a.M) {
 
-    unsigned int mask = 0;
-    int tmp = 0;
-    // int frontCol = 0;
-    
-    if(aStart + laneId < aEnd){
-        int bRowId = a.cols[aStart + laneId];
+        int aStart = a.row_index[warpId];
+        int aEnd = a.row_index[warpId + 1];
+
+        // unsigned int mask = 0;
+        unsigned int mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd));
+        int tmp = 0;
+        // int frontCol = 0;
         
-        //elems are adjacent with the mask
-        mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd));
-        for(int rowPos = b.row_index[bRowId]; __any_sync(mask,rowPos < b.row_index[bRowId+1]);tmp++){
-
-            // mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd) && (rowPos < b.row_index[bRowId+1]));
+        if(aStart + laneId < aEnd){
+            int bRowId = a.cols[aStart + laneId];
             
-            int frontCol = rowPos < b.row_index[bRowId+1] ? (b.cols[rowPos] + 1) : 0;
-
-            // printf("WarpId=%i LaneId=%i= frontCol=%i rowPos=%i\n",warpId,laneId,frontCol,rowPos);
-            // if (rowPos < b.row_index[bRowId+1]){
-                // frontCol = b.cols[rowPos] + 1;
-            // } else {
-                // frontCol = 0;
-            // }
-
-            // printf("WarpId=%i, LanedId=%i,Mask=%i, number of 1's=%i\n",warpId,laneId,mask,__popc(mask));
-            // int frontCol = b.cols[rowPos] + 1; //+1 to find minimum correctly
-            // float frontVal = b.values[rowPos];
+            //elems are adjacent with the mask
             
-            //find minimum frontCol ???????
-            int frontColMin = WarpMin(mask,frontCol,laneId);
-            frontColMin = __shfl_sync(mask,frontColMin,__popc(mask)-1);
+            for(int rowPos = b.row_index[bRowId]; __any_sync(mask,rowPos < b.row_index[bRowId+1]);tmp++){
 
-            // printf("WarpId=%i, LaneId=%i, frontCol=%i, frontColMin=%i\n",warpId,laneId,frontCol,frontColMin);
-            
-            if(frontCol == frontColMin) {
-                rowPos++;
+                // mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd) && (rowPos < b.row_index[bRowId+1]));
+                
+                int frontCol = rowPos < b.row_index[bRowId+1] ? (b.cols[rowPos] + 1) : 0;
+
+                // printf("WarpId=%i LaneId=%i= frontCol=%i rowPos=%i\n",warpId,laneId,frontCol,rowPos);
+                // if (rowPos < b.row_index[bRowId+1]){
+                    // frontCol = b.cols[rowPos] + 1;
+                // } else {
+                    // frontCol = 0;
+                // }
+
+                // printf("WarpId=%i, LanedId=%i,Mask=%i, number of 1's=%i\n",warpId,laneId,mask,__popc(mask));
+                // int frontCol = b.cols[rowPos] + 1; //+1 to find minimum correctly
+                // float frontVal = b.values[rowPos];
+                
+                //find minimum frontCol ???????
+                int frontColMin = WarpMin(mask,frontCol,laneId);
+                frontColMin = __shfl_sync(mask,frontColMin,__popc(mask)-1);
+
+                // printf("WarpId=%i, LaneId=%i, frontCol=%i, frontColMin=%i\n",warpId,laneId,frontCol,frontColMin);
+                
+                if(frontCol == frontColMin) {
+                    rowPos++;
+                }
+
             }
-
+            
         }
-        
-    }
-    if(laneId == 0){
-        c.row_index[warpId+1] = tmp;
-        
-    }else if(laneId == 0 && mask == 0){ //empty row
-        c.row_index[warpId+1] = 0;
+        if(laneId == 0){
+            if (mask == 0){ //empty row
+                c.row_index[warpId+1] = 0;    
+            } else {
+                c.row_index[warpId+1] = tmp;    
+            }
+            
+        }
     }
     
 }
@@ -172,60 +149,64 @@ __global__ void preproccessRows(struct CSR a, struct CSR b, struct CSR c){
 __global__ void spGEMMDevice(struct CSR a, struct CSR b, struct CSR c) {
     #define FULL_MASK 0xffffffff
     
-    int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / 32; //is rowId
+    int threadId = getGlobalIdx_2D_1D();
+    int warpId = threadId / 32; //is rowId
     int laneId = threadIdx.x % 32;
 
-    int aStart = a.row_index[warpId];
-    int aEnd = a.row_index[warpId + 1];
+    if(warpId < a.M) {
 
-    unsigned int mask = 0;
-    float tmp = 0.0;
-    
-    if(aStart + laneId < aEnd){
+        int aStart = a.row_index[warpId];
+        int aEnd = a.row_index[warpId + 1];
+
+        unsigned int mask = 0;
+        float tmp = 0.0;
         
-        int bRowId = a.cols[aStart + laneId];
-        float rowWeight = a.values[aStart + laneId];
-
-        mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd));
-
-
-        int currentCol = 0;
-        
-        for(int rowPos = b.row_index[bRowId]; __any_sync(mask,rowPos < b.row_index[bRowId+1]); currentCol++){
-
-            // mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd) && (rowPos < b.row_index[bRowId+1]));
+        if(aStart + laneId < aEnd){
             
+            int bRowId = a.cols[aStart + laneId];
+            float rowWeight = a.values[aStart + laneId];
+
+            mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd));
+
+
+            int currentCol = 0;
             
-            //int frontCol = b.cols[rowPos] + 1; //+1 to find minimum correctly
-            //float frontVal = b.values[rowPos];
-            int frontCol = rowPos < b.row_index[bRowId+1] ? (b.cols[rowPos] + 1) : 0;
-            float frontVal = rowPos < b.row_index[bRowId+1] ? (b.values[rowPos]) : 0.0f;
-            //find minimum frontCol
-            int frontColMin = WarpMin(mask,frontCol,laneId);
-            frontColMin = __shfl_sync(mask,frontColMin,__popc(mask)-1);
+            for(int rowPos = b.row_index[bRowId]; __any_sync(mask,rowPos < b.row_index[bRowId+1]); currentCol++){
 
-            // printf("WarpId=%i, LaneId=%i, frontCol=%i, frontColMin=%i\n",warpId,laneId,frontCol,frontColMin);
+                // mask = __ballot_sync(FULL_MASK, (aStart + laneId < aEnd) && (rowPos < b.row_index[bRowId+1]));
+                
+                
+                //int frontCol = b.cols[rowPos] + 1; //+1 to find minimum correctly
+                //float frontVal = b.values[rowPos];
+                int frontCol = rowPos < b.row_index[bRowId+1] ? (b.cols[rowPos] + 1) : 0;
+                float frontVal = rowPos < b.row_index[bRowId+1] ? (b.values[rowPos]) : 0.0f;
+                //find minimum frontCol
+                int frontColMin = WarpMin(mask,frontCol,laneId);
+                frontColMin = __shfl_sync(mask,frontColMin,__popc(mask)-1);
 
-            if(frontCol == frontColMin) {
-                rowPos++;
-                tmp = frontVal * rowWeight;
-                // printf("LaneID=%i, a=%f,b=%f,tmp=%f\n",laneId,rowWeight,frontVal,tmp);
-            } else {
-                tmp = 0.0;
+                // printf("WarpId=%i, LaneId=%i, frontCol=%i, frontColMin=%i\n",warpId,laneId,frontCol,frontColMin);
+
+                if(frontCol == frontColMin) {
+                    rowPos++;
+                    tmp = frontVal * rowWeight;
+                    // printf("LaneID=%i, a=%f,b=%f,tmp=%f\n",laneId,rowWeight,frontVal,tmp);
+                } else {
+                    tmp = 0.0;
+                }
+
+                float sum = WarpSum(mask,tmp,laneId);
+                sum = __shfl_sync(mask,sum,0); //broadcast
+                
+                if(laneId == 0){
+                    // printf("LaneId=%i\n",laneId);
+                    // printf("WARP=%i WRITING COL=%i for %i pos, current COL=%i\n",warpId,frontColMin-1,c.row_index[warpId]+currentCol,currentCol);
+                    c.values[c.row_index[warpId]+currentCol] = sum;
+                    c.cols[c.row_index[warpId]+currentCol] = frontColMin - 1;
+                }
+
             }
-
-            float sum = WarpSum(mask,tmp,laneId);
-            sum = __shfl_sync(mask,sum,0); //broadcast
             
-            if(laneId == 0){
-                // printf("LaneId=%i\n",laneId);
-                // printf("WARP=%i WRITING COL=%i for %i pos, current COL=%i\n",warpId,frontColMin-1,c.row_index[warpId]+currentCol,currentCol);
-                c.values[c.row_index[warpId]+currentCol] = sum;
-                c.cols[c.row_index[warpId]+currentCol] = frontColMin - 1;
-            }
-
         }
-        
     }
 }
 
@@ -275,7 +256,23 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
 
     CHECK_CUDA( cudaMemset(dC_csrOffsets,0,(cDevice.M + 1) * sizeof(int)));
 
-    int blockNum = a->M;
+    // int block = a->M;
+
+    dim3 grid(1,1,1);
+
+    //
+    int k = (a->M / 65535) + 1;
+    if (k > 1) {
+        grid.x = 65535;
+        if(k > 65535){
+            grid.y = 65535;
+        } else {
+            grid.y = k;
+        }
+        
+    } else {
+        grid.x = a->M;
+    }
 
     aDevice.cols = dA_columns;
     aDevice.row_index = dA_csrOffsets;
@@ -287,14 +284,16 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
 
     cDevice.row_index = dC_csrOffsets;
 
-    preproccessRows<<<blockNum,32>>>(aDevice,bDevice,cDevice);
+    preproccessRows<<<grid,32>>>(aDevice,bDevice,cDevice);
     cudaDeviceSynchronize();
     
-    thrust::inclusive_scan(thrust::device, dC_csrOffsets, dC_csrOffsets + cDevice.M + 1, dC_csrOffsets); // in-place scan
-
+    // thrust::inclusive_scan(thrust::Tracy Ellisdevice, dC_csrOffsets, dC_csrOffsets + cDevice.M + 1, dC_csrOffsets); // in-place scan
+    prefixSum(dC_csrOffsets, cDevice.M + 1);
     // unsigned int crows = 0;
     CHECK_CUDA( cudaMemcpy(&(c->nnz), dC_csrOffsets+c->M,
         (1) * sizeof(int), cudaMemcpyDeviceToHost) )
+
+    //if zero return empty matrix;
 
     CHECK_CUDA( cudaMalloc((void**) &dC_columns, c->nnz * sizeof(int))   )
     CHECK_CUDA( cudaMalloc((void**) &dC_values,  c->nnz * sizeof(float)) )
@@ -303,7 +302,7 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
     cDevice.cols = (unsigned int*)dC_columns;
     
     
-    spGEMMDevice<<<blockNum,32>>>(aDevice,bDevice,cDevice);
+    spGEMMDevice<<<grid,32>>>(aDevice,bDevice,cDevice);
 
     cudaDeviceSynchronize();
 
@@ -505,6 +504,9 @@ int spGEMMCusparse(struct CSR* a, struct CSR* b, struct CSR* c){
     CHECK_CUDA( cudaMemcpy(c->values, dC_values,
                                                c->nnz * sizeof(float), cudaMemcpyDeviceToHost) )
 
+    
+    CHECK_CUDA( cudaFree(dBuffer1) )
+    CHECK_CUDA( cudaFree(dBuffer2) )                                            
     CHECK_CUDA( cudaFree(dA_csrOffsets) )
     CHECK_CUDA( cudaFree(dA_columns) )
     CHECK_CUDA( cudaFree(dA_values) )

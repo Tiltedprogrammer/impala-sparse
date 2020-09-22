@@ -1,0 +1,21 @@
+struct S[T] {
+    elem: T
+}
+fn select2[T](cond: bool, a: T, b: T) -> T {
+    if cond { a } else { b }
+}
+
+#[export]
+fn infinity() -> f32;
+
+#[export]
+fn main() -> i32 {
+    S[i32] { elem = select2[i32](true, 0, 1) }.elem;
+    cuda(0,(1,1,1),(1,1,1), || {
+        cuda_vprintf("hello from cuda\n","");
+    });
+    synchronize_cuda(0);
+    print_string("Hello\n");
+    print_f32(-infinity());
+    0
+}

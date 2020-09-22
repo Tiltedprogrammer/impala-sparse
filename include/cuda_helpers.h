@@ -1,6 +1,9 @@
 #ifndef CUDA_HELPERS_H
 #define CUDA_HELPERS_H
 
+#include <thrust/scan.h>
+#include <thrust/execution_policy.h>
+
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
     cudaError_t status = (func);                                               \
@@ -20,5 +23,6 @@
         return EXIT_FAILURE;                                                   \
     }                                                                          \
 }
+
 
 #endif

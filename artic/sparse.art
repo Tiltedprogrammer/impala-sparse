@@ -1,27 +1,19 @@
-struct CSR {
+struct CSR [T] {
     N : u32, //cols
     M : u32, //rows
     nnz : u32, //number of nonzero elements
-    values : &mut[f32], //row-major
+    values : &mut[T], //row-major
     cols : &mut[u32],
     row_index : &mut[u32]
 }
 
 
 
-struct Semiring {
-    zero : fn() -> f32,
-    one : fn() -> f32,
-    plus : fn(f32,f32) -> f32,
-    multiply : fn(f32,f32) -> f32
-}
-
-
-struct Matrix {
-    semiring : Semiring,
-    get : fn (u32, u32) -> f32,
-    release : fn() -> (),//  get, release, semiring ..., multiply
-    multiply : fn(Matrix) -> Matrix
+struct Semiring [T] {
+    zero : fn() -> T,
+    one : fn() -> T,
+    plus : fn(T,T) -> T,
+    multiply : fn(T,T) -> T
 }
 
 //read matrix
@@ -46,40 +38,37 @@ struct Matrix {
 //multiply
 
 //preprosess rows
-extern "C" {
-    fn prefixSum(start : &mut[u32],end : u32) -> ();
-}
+
+#[export]
+fn prefixSum(start : &mut[u32],end : u32) -> ();
+
 //prefix sum
 //spGemm
 
-extern fn get_nnz(cst : &CSR) -> u32 {
-    (*cst).nnz
-}
-
-fn copy_csr_toDevice(source : &CSR, dst : &CSR) -> () {
-    runtime_copy(runtime_device(0, 0), source.values as &[i8], 0i64, runtime_device(1, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[f32]());
-    runtime_copy(runtime_device(0, 0), source.cols as &[i8], 0i64, runtime_device(1, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[f32]());
+fn copy_csr_toDevice[T](source : &CSR[T], dst : &CSR[T]) -> () {
+    runtime_copy(runtime_device(0, 0), source.values as &[i8], 0i64, runtime_device(1, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[T]());
+    runtime_copy(runtime_device(0, 0), source.cols as &[i8], 0i64, runtime_device(1, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[u32]());
     runtime_copy(runtime_device(0, 0), source.row_index as &[i8], 0i64, runtime_device(1, 0), dst.row_index as &[i8], 0i64, (dst.M + 1u32) as i64 * sizeof[u32]());
     
 }
 
-fn release_csr_Device(csr : &CSR)-> () {
+fn release_csr_Device[T](csr : &CSR[T])-> () {
     runtime_release(runtime_device(1, 0), csr.values as &[i8]);
     runtime_release(runtime_device(1, 0), csr.cols as &[i8]);
     runtime_release(runtime_device(1, 0), csr.row_index as &[i8]);
     
 }
 
-fn release_csr_Host(csr : &CSR)-> () {
+fn release_csr_Host[T](csr : &CSR[T])-> () {
     runtime_release(runtime_device(0, 0), csr.values as &[i8]);
     runtime_release(runtime_device(0, 0), csr.cols as &[i8]);
     runtime_release(runtime_device(0, 0), csr.row_index as &[i8]);
     
 }
 
-fn copy_csr_toHost(source : &CSR, dst : &CSR) -> (){
-    runtime_copy(runtime_device(1, 0), source.values as &[i8], 0i64, runtime_device(0, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[f32]());
-    runtime_copy(runtime_device(1, 0), source.cols as &[i8], 0i64, runtime_device(0, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[f32]());
+fn copy_csr_toHost[T](source : &CSR[T], dst : &CSR[T]) -> (){
+    runtime_copy(runtime_device(1, 0), source.values as &[i8], 0i64, runtime_device(0, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[T]());
+    runtime_copy(runtime_device(1, 0), source.cols as &[i8], 0i64, runtime_device(0, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[u32]());
     runtime_copy(runtime_device(1, 0), source.row_index as &[i8], 0i64, runtime_device(0, 0), dst.row_index as &[i8], 0i64, (dst.M + 1u32) as i64 * sizeof[u32]());
 }
 
@@ -119,11 +108,12 @@ fn WarpMin(mask : u32, value : u32) -> u32{
 
 
 //should be generic and replaceable 
-fn WarpBinOp(mask : u32, value : f32, binOp : fn(f32,f32) -> f32, zero : fn() -> f32, laneId : u32) -> f32 {
+fn WarpBinOp[T](mask : u32, value : T, binOp : fn(T,T) -> T, zero : fn() -> T, laneId : u32) -> T {
     let mut offset = 16u32;
     let mut tmp_val = value;
     while (offset > 0u32) {
         //think about reduction??
+        //replace for shared mem
         let mut shfl = cuda_warp_shfl_up_f32(mask, tmp_val, offset, 32);
         if offset > laneId {
             shfl = zero();

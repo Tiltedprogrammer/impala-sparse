@@ -3,6 +3,9 @@ extern "C" {
 }
 
 
+//csr reader
+
+// fn read_csr(path : &[u8]) -> 
 
 
 fn main() -> (){

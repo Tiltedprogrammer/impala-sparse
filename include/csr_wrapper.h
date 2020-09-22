@@ -10,12 +10,20 @@
 #include <iostream>
 
 
+//impala compatabiity
+#include <stdlib.h>
+
+#include <chrono>
+
+
+
+
 // CUSPARSE STUFF
 // #include <cuda_runtime.h> // cudaMalloc, cudaMemcpy, etc.
 // #include <cusparse.h>         // cusparseSpGEMM
 
 
-#include "cuda_helpers.h"
+// #include "cuda_helpers.cuh"
 
 
 
@@ -30,6 +38,46 @@
 // mkl_sparse_s_add(...)
 //  mkl_sparse_spmm
 #include "mkl_spblas.h"
+
+
+extern "C" {
+    #include "GraphBLAS.h"
+}
+
+
+//------------------------------------------------------------------------------
+// CHECK: expr must be true; if not, return an error condition
+//------------------------------------------------------------------------------
+
+// the #include'ing file must define the FREE_ALL macro
+
+#define CHECK(expr,info)                                                \
+{                                                                       \
+    if (! (expr))                                                       \
+    {                                                                   \
+        /* free the result and all workspace, and return NULL */        \
+        printf ("Failure: line %d file %s\n", __LINE__, __FILE__) ;     \
+    }                                                                   \
+}
+
+//------------------------------------------------------------------------------
+// OK: call a GraphBLAS method and check the result
+//------------------------------------------------------------------------------
+
+// OK(method) is a macro that calls a GraphBLAS method and checks the status;
+// if a failure occurs, it handles the error via the CHECK macro above, and
+// returns the error status to the caller.
+
+#define OK(method)                                                      \
+{                                                                       \
+    info = method ;                                                     \
+    if (!(info == GrB_SUCCESS || info == GrB_NO_VALUE))                 \
+    {                                                                   \
+        printf ("GraphBLAS error:\n%s\n", GrB_error ( )) ;              \
+        CHECK (false, info) ;                                           \
+    }                                                                   \
+}
+
 
 
 #define CALL_AND_CHECK_STATUS(function, error_message) do { \
@@ -53,6 +101,28 @@
 } while(0)
 //from MM to CSR struct from Impala
 
+
+class GraphBLASHandler {
+    public:
+        static GraphBLASHandler& getInstance()
+        {
+            static GraphBLASHandler instance; // Guaranteed to be destroyed.
+                                  // Instantiated on first use.
+            return instance;
+        }
+        GraphBLASHandler(GraphBLASHandler const&) = delete;
+        void operator=(GraphBLASHandler const&)  = delete;
+        ~GraphBLASHandler() {
+            GrB_Info info;
+            OK(GrB_finalize());
+        }
+
+    private:
+        GraphBLASHandler() {
+            GrB_Info info;
+            OK(GrB_init(GrB_BLOCKING));
+        }
+};
 //transpose
 template<typename T>
 class CSRWrapper{
@@ -63,10 +133,13 @@ class CSRWrapper{
         CSRWrapper(const CSRWrapper<T>& another);
         ~CSRWrapper() = default;
         struct CSR csr_to_struct() const;
+        std::vector<std::unique_ptr<CSRWrapper<T>>> spmmDecompose() const;
         CSRWrapper<T> multiply (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_impala (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cusparse (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cuda (const CSRWrapper<T>& another) const;
+        CSRWrapper<T> multiply_suite_sparse (const CSRWrapper<T>& another) const;
+
         CSRWrapper<T> subtract (const CSRWrapper<T>& another) const;
         T get_matrix_elem(int row, int col);
         // T const * get_values();
@@ -81,6 +154,9 @@ class CSRWrapper{
         template<typename U>
         friend bool operator==(const CSRWrapper<U>& l, const CSRWrapper<U>& r);
     private:
+        GraphBLASHandler& gb_handler = GraphBLASHandler::getInstance();
+        CSRWrapper<T> multiply_cuda_simple (const CSRWrapper<T>& another) const;
+        CSRWrapper<T> multiply_impala_simple (const CSRWrapper<T>& another) const;
         std::unique_ptr<T[]> values_;
         std::unique_ptr<unsigned int[]> cols_;
         std::unique_ptr<unsigned int[]> row_index_;
@@ -196,6 +272,87 @@ CSRWrapper<T>::CSRWrapper(const CSRWrapper<T>& another){
     std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());
 }
 
+//reduction of the resulting vector should give the initial matrix
+template<>
+std::vector<std::unique_ptr<CSRWrapper<float>>> CSRWrapper<float>::spmmDecompose() const{
+    
+    auto vCsr = std::vector<std::unique_ptr<CSRWrapper<float>>>();
+
+    auto G_values = std::unique_ptr<float[]> (new float[nnz]);
+    auto G_cols = std::unique_ptr<unsigned int []>(new unsigned int[nnz]);
+
+    std::copy(values_.get(),values_.get()+nnz, G_values.get());
+    std::copy(cols_.get(),cols_.get()+nnz,G_cols.get());
+
+    //for each row:
+    std::vector<unsigned int> G_csrOffsetsV;
+    unsigned int warp_size = 32;
+    G_csrOffsetsV.push_back(0);
+
+    std::vector<unsigned int> A1_csrOffsetsV;
+    A1_csrOffsetsV.push_back(0);
+    std::vector<float> A1_valuesV;
+    std::vector<unsigned int> A1_colsV;
+
+    unsigned int A1_col = 0;
+    
+
+    for (int r = 0; r < M; r++) {
+        int row_length = row_index_[r+1] - row_index_[r];
+        int A1_row_length = 0;
+        if (row_length > warp_size) {
+            //push the ending index of the row
+            // int number_of_new_rows = (row_length) / warp_size + 1; //assume row_length = 33, row_idx = 0, row_index_[r+1] = 33;
+            for (int row_idx = row_index_[r]; row_idx < row_index_[r+1]; A1_row_length++) { // 2 iterations, row_idx = 0;
+                if (row_idx + warp_size > row_index_[r+1]){ // if i == 2
+                    G_csrOffsetsV.push_back(row_idx + row_length - (warp_size * A1_row_length)); // push 33
+                    row_idx += warp_size;
+                } else {
+                    row_idx += warp_size;
+                    G_csrOffsetsV.push_back(row_idx); //push 32
+                }
+                A1_valuesV.push_back(1.0);
+                A1_colsV.push_back(A1_col);
+                A1_col++;
+                
+            }
+            
+        } else {
+            A1_row_length = 1;
+            G_csrOffsetsV.push_back(row_index_[r+1]);
+            A1_valuesV.push_back(1.0);
+            A1_colsV.push_back(A1_col);
+            A1_col++;
+        }
+
+        //push A1_csrOffsets:
+        A1_csrOffsetsV.push_back(A1_csrOffsetsV.back() + A1_row_length);
+
+    }
+
+    
+    //finish constructing G1
+    auto G_csrOffsets = std::unique_ptr<unsigned int []>(new unsigned int[G_csrOffsetsV.size()]);
+    std::copy(G_csrOffsetsV.begin(),G_csrOffsetsV.end(),G_csrOffsets.get());
+
+    auto A1_values = std::unique_ptr<float[]> (new float[A1_valuesV.size()]);
+    auto A1_cols = std::unique_ptr<unsigned int []>(new unsigned int[A1_colsV.size()]);
+    auto A1_csrOffsets = std::unique_ptr<unsigned int []>(new unsigned int[A1_csrOffsetsV.size()]);
+
+    std::copy(A1_valuesV.begin(),A1_valuesV.end(),A1_values.get());
+    std::copy(A1_colsV.begin(),A1_colsV.end(),A1_cols.get());
+    std::copy(A1_csrOffsetsV.begin(),A1_csrOffsetsV.end(),A1_csrOffsets.get());
+    
+    auto G_ptr = std::unique_ptr<CSRWrapper<float>>(new CSRWrapper<float>(G_csrOffsetsV.size() - 1,N,nnz,std::move(G_values),std::move(G_cols),std::move(G_csrOffsets)));
+    auto A1_ptr = std::unique_ptr<CSRWrapper<float>>(new CSRWrapper<float>(M,A1_col,A1_valuesV.size(),std::move(A1_values),std::move(A1_cols),std::move(A1_csrOffsets)));
+
+    vCsr.push_back(std::move(G_ptr));
+    vCsr.push_back(std::move(A1_ptr));
+
+    return vCsr;
+}
+
+
 template<>
 struct CSR CSRWrapper<float>::csr_to_struct() const{
     struct CSR csr = CSR{N : N, M : M, nnz : nnz, values : values_.get(), cols : cols_.get(), row_index : row_index_.get()};
@@ -237,21 +394,8 @@ CSRWrapper<float> CSRWrapper<float>::multiply (const CSRWrapper<float>& another)
     sparse_matrix_t mkl_this;
     sparse_matrix_t mkl_another;
 
-    // check tmp arrays
-
-    auto values_tmp = new float[nnz];
-    auto cols_tmp = new int[nnz];
-    auto rows_tmp = new int[M + 1];
-
-    std::copy(values_.get(),values_.get()+nnz,values_tmp);
-    std::copy((int*)cols_.get(),(int*)cols_.get()+nnz,cols_tmp);
-    std::copy((int*)row_index_.get(),(int*)row_index_.get()+M+1,rows_tmp);
-
-    // CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
-    //  (int*)(row_index_.get()), (int*)(row_index_.get()) + 1, (int*)cols_.get(), values_.get()),"Error\n");
-
     CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
-     rows_tmp, rows_tmp + 1, cols_tmp, values_tmp),"Error\n");
+     (int*)row_index_.get(), (int*)row_index_.get() + 1, (int*)cols_.get(), values_.get()),"Error\n");
     // assert(mkl_this_status == SPARSE_STATUS_SUCCESS);
     
     CALL_AND_CHECK_STATUS(
@@ -290,9 +434,9 @@ CSRWrapper<float> CSRWrapper<float>::multiply (const CSRWrapper<float>& another)
     mkl_sparse_destroy(mkl_this);
     mkl_sparse_destroy(mkl_another);
 
-    delete[] values_tmp;
-    delete[] rows_tmp;
-    delete[] cols_tmp;
+    // delete[] values_tmp;
+    // delete[] rows_tmp;
+    // delete[] cols_tmp;
 
 
     return CSRWrapper(rows,cols,nnz,std::move(values_out),std::move(cols_out),std::move(rows_out));
@@ -301,11 +445,11 @@ CSRWrapper<float> CSRWrapper<float>::multiply (const CSRWrapper<float>& another)
 }
 
 template<>
-CSRWrapper<float> CSRWrapper<float>::multiply_cuda(const CSRWrapper<float>& another) const{
+CSRWrapper<float> CSRWrapper<float>::multiply_cuda_simple(const CSRWrapper<float>& another) const{
     struct CSR csrA = csr_to_struct();
     struct CSR csrB = another.csr_to_struct();
     struct CSR csrC = {};
-
+    
     spGEMMCuda(&csrA, &csrB,&csrC);
 
     //copy to unique ptr;
@@ -326,6 +470,49 @@ CSRWrapper<float> CSRWrapper<float>::multiply_cuda(const CSRWrapper<float>& anot
     return CSRWrapper(csrC.M,csrC.N,csrC.nnz,std::move(hC_values),std::move(hC_cols),std::move(hC_csrOffsets));
 
 
+
+}
+
+
+template<>
+CSRWrapper<float> CSRWrapper<float>::multiply_cuda(const CSRWrapper<float>& another) const{
+    
+    
+    int warp_size = 32;
+
+    if(this->max_row_length() <= warp_size) return this->multiply_cuda_simple(another);
+    else {
+        auto csrV = this->spmmDecompose();
+        auto csrC_tmp = csrV[0]->multiply_cuda_simple(another);
+        return csrV[1]->multiply_cuda(csrC_tmp);
+        
+    }
+}
+
+template<>
+CSRWrapper<float> CSRWrapper<float>::multiply_impala(const CSRWrapper<float>& another) const{
+    
+    auto a = this->csr_to_struct();
+    auto b = another.csr_to_struct();
+
+    auto csrC = spGEMMimpala(&a,&b);
+
+    auto hC_values = std::unique_ptr<float[]>(new float[csrC.nnz]);
+
+    auto hC_cols = std::unique_ptr<unsigned int[]>(new unsigned int[csrC.nnz]);
+
+    auto hC_csrOffsets = std::unique_ptr<unsigned int[]>(new unsigned int[csrC.M + 1]);
+
+    std::copy(csrC.values, csrC.values + csrC.nnz, hC_values.get());
+    std::copy(csrC.cols, csrC.cols + csrC.nnz, hC_cols.get());
+    std::copy(csrC.row_index, csrC.row_index + csrC.M + 1, hC_csrOffsets.get());
+
+    //free
+    free(csrC.values);
+    free(csrC.row_index);
+    free(csrC.cols);
+
+    return CSRWrapper(csrC.M,csrC.N,csrC.nnz,std::move(hC_values),std::move(hC_cols),std::move(hC_csrOffsets));
 
 }
 
@@ -355,7 +542,138 @@ CSRWrapper<float> CSRWrapper<float>::multiply_cusparse(const CSRWrapper<float>& 
 
     return CSRWrapper(csrC.M,csrC.N,csrC.nnz,std::move(hC_values),std::move(hC_cols),std::move(hC_csrOffsets));
 
+}
 
+template<>
+CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<float>& another) const{
+    
+
+    GrB_Info info ;
+
+    //this graphblass
+
+    GrB_Matrix thisA, anotherA, C;
+
+    OK(GrB_Matrix_new(&thisA,GrB_FP32,this->M,this->N));
+    OK(GrB_Matrix_new(&anotherA,GrB_FP32,another.M,another.N));
+    OK(GrB_Matrix_new(&C,GrB_FP32,this->M,another.N));
+    //get tuples for row, cols, values
+    //copy
+    GrB_Index* thisAcols = new uint64_t[this->nnz];
+    for (uint64_t i = 0; i < this->nnz; i++)
+    {
+        thisAcols[i] = this->cols_.get()[i];
+    }
+    
+    const float* thisAvals = this->values_.get();
+    // csr_to_tuples
+    GrB_Index* anotherAcols = new uint64_t[another.nnz];
+    
+    for (uint64_t i = 0; i < another.nnz; i++)
+    {
+        anotherAcols[i] = another.cols_.get()[i];
+    }
+    
+    const float* anotherAvals = another.values_.get();
+
+    //row tuples
+    uint64_t* thisArows = new uint64_t[this->nnz];
+    uint64_t* anotherArows = new uint64_t[another.nnz];
+
+    for(uint64_t i = 0, k = 0; i < this->M; i++) {
+
+        for(unsigned int j = this->row_index_.get()[i]; j < this->row_index_.get()[i+1]; j++,k++) {
+            thisArows[k] = i;
+        }
+    }
+
+    for(uint64_t i = 0, k = 0; i < another.M; i++) {
+
+        for(unsigned int j = another.row_index_.get()[i]; j < another.row_index_.get()[i+1]; j++,k++) {
+            anotherArows[k] = i;
+        }
+    }
+
+    GrB_BinaryOp xop = GrB_PLUS_FP32;
+
+    OK(GrB_Matrix_build_FP32(thisA,(const uint64_t*) thisArows,(const uint64_t*)thisAcols,thisAvals,(uint64_t)this->nnz,xop));
+    OK(GrB_Matrix_build_FP32(anotherA,(const uint64_t*) anotherArows,(const uint64_t*)anotherAcols,anotherAvals,(uint64_t)another.nnz,xop));
+
+    const GrB_Semiring semiring = GxB_PLUS_TIMES_FP32;
+    // const GrB_Semiring semiring = GxB_MAX_PLUS_FP32;
+
+
+    OK(GrB_mxm(C,NULL,NULL,semiring,thisA,anotherA,NULL));
+
+    GrB_Index* I;
+    GrB_Index* J;
+    float* X;
+    GrB_Index Cnnz;
+    OK( GrB_Matrix_nvals(&Cnnz,C));
+    I = new GrB_Index[Cnnz];
+
+    J = new GrB_Index[Cnnz];
+    X = new float [Cnnz];
+    OK(GrB_Matrix_extractTuples_FP32(I,J,X,&Cnnz,C));
+
+
+    // std::cout << "C nnz " << Cnnz << std::endl;
+
+    auto Ccols = std::unique_ptr<unsigned int[]>(new unsigned int [Cnnz]);
+    auto Cvals = std::unique_ptr<float[]>(new float[Cnnz]);
+    std::copy(J, J + Cnnz,Ccols.get());
+    std::copy(X, X + Cnnz,Cvals.get());
+
+    auto Crows = std::unique_ptr<unsigned int[]>(new unsigned int[this->M + 1]);
+
+    Crows.get()[0] = 0;
+    
+    for (int i = 0; i < Cnnz; i++) {
+        Ccols.get()[i] = J[i];
+        Cvals.get()[i] = X[i];
+    }
+    //csr offsets
+    //test empty row
+    int row_length = 0;
+    
+    for (int r = 0, r_id = 0; r < Cnnz || r_id < this->M;) {
+        if (r < Cnnz && I[r] == r_id) {
+            row_length ++;
+            r++;
+        } else {
+            r_id++;
+            Crows.get()[r_id] = Crows.get()[r_id - 1] + row_length;
+            row_length = 0;    
+        }
+    }
+    // Crows.get()[this->M] = Crows.get()[this->M-1] + row_length;
+    
+    // std::cout << "C csr offsets: ";
+    
+    // for (int i = 0; i < this->M + 1; i++) {
+        // std::cout << Crows.get()[i] << " ";
+    // }
+    // std::cout << std::endl;
+
+
+    //build matricies
+
+    delete [] (thisArows);
+    delete [] (thisAcols);
+    delete[] (anotherArows);
+    delete[] (anotherAcols);
+
+    delete[] (I);
+    delete[] (J);
+    delete[] (X);
+
+    OK(GrB_Matrix_free(&thisA));
+    OK(GrB_Matrix_free(&anotherA));
+    OK(GrB_Matrix_free(&C));
+
+    // OK(GrB_finalize ( )) ;
+
+    return CSRWrapper(this->M,another.N,Cnnz,std::move(Cvals),std::move(Ccols),std::move(Crows));
 
 }
 
@@ -474,6 +792,7 @@ std::ostream & operator << (std::ostream &out, const CSRWrapper<T> &c)
 template<typename T>
 bool operator==(const CSRWrapper<T>& l, const CSRWrapper<T>& r)
     {
+        if (l.nnz == 0 && r.nnz == 0) return true;
         
         float maxC_ij = 0.0;
         CSRWrapper<float> C = l.subtract(r);
@@ -503,16 +822,6 @@ bool operator==(const CSRWrapper<T>& l, const CSRWrapper<T>& r)
         
         
     }
-
-
-// template<typename T>
-// CSRWrapper<T>::~CSRWrapper() {
-//     delete[] (values_);
-//     delete[] (cols_);
-//     delete[] (row_index_);
-// }
-
-
 
 
 #endif

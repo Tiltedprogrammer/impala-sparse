@@ -12,103 +12,88 @@
 
 #include <filesystem>
 
+#include <chrono>
+
+#include <GraphBLAS.h>
 // TODO UNIQUEPTR
 
 namespace fs = std::filesystem;
 
 
 int main(int argc, char ** argv) {
-    
-    std::ifstream csrA_simple ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixA");
-    std::ifstream csrB_simple ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixB");
-    std::ifstream csrC_simple ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixC");
-    // std::ifstream is4 ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrix_market_example");
-    std::ifstream csrA_cusparse ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixA_cusparse");
-    std::ifstream csrB_cusparse ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixB_cusparse");
-    std::ifstream csrC_cusparse ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixC_cusparse");
 
-    std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/GD01_Acap.mtx");
+    GrB_Info info;
+
+    // OK(GrB_init(GrB_BLOCKING));
+    
+    std::ifstream isA ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixA_cusparse");
+    std::ifstream isB ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixB_cusparse");
+    
+    // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_003.mtx-out");
+    // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_077.mtx-out");
 
    
-    // matrix_market::reader reader (is);
-
-    // if (reader) {
-        // auto &matrix = reader.matrix ();
-        // auto &meta   = matrix.meta;
-        // auto col_ids = matrix.get_col_ids ();
-        // auto row_ids = matrix.get_row_ids ();
-        // auto data    = matrix.get_dbl_data ();
-
-        // is.clear();
-        // is.seekg(0);
-        // CSRWrapper<float> csr(is);
-
-        // for (unsigned int i = 0; i < meta.non_zero_count; i++) {
-        //     const unsigned int col = col_ids[i];
-        //     const unsigned int row = row_ids[i];
-        //     const auto value = data[i];
-        //     assert(std::abs(value - csr.get_matrix_elem(row,col)) < 0.001);
-        //     std::cout << std::setprecision(10) << row << " " << col << " " << value << " " << csr.get_matrix_elem(row,col) << std::endl;
-        // }
-
-        // auto csr_struct = csr.csr_to_struct();
-        // std::cout << get_nnz(&csr_struct) << std::endl;
-
-        // std::cout << csr;
-
-        // assert(csr == csr);
-        // auto csrA = CSRWrapper<float>(csrA_cusparse);
-        // auto csrB = CSRWrapper<float>(csrB_cusparse);
-        // auto csrC = CSRWrapper<float>(csrC_cusparse);
-        auto csrA = CSRWrapper<float>(oscii_dcop_46);
-        // auto csrB = CSRWrapper<float>(is2);
-        // auto csrC = CSRWrapper<float>(is3);
-        std::cout << csrA.max_row_length() << std::endl;
-        if(csrA.max_row_length() <= 32) {
-            CSRWrapper<float> csrAA_cuda = csrA.multiply_cuda(csrA);
-            CSRWrapper<float> csrAA_mtl = csrA.multiply_cusparse(csrA);
-            std::cout << csrAA_cuda.nnz << std::endl;
-            std::cout << csrAA_mtl.nnz << std::endl;
+    //init graphBlass:
         
-            assert(csrAA_cuda.get_row_index() == csrAA_mtl.get_row_index() && "csrOffsets are not equal");
-            // for(const auto elem : csrAA_mtl.get_values()) {
-            //     std::cout << elem << " ";
-            // }
-            // std::cout << std::endl;
+    auto csrA = CSRWrapper<float>(isA);
+    auto csrB = CSRWrapper<float>(isB);
 
-            // for(const auto elem : csrAA_cuda.get_values()) {
-            //     std::cout << elem << " ";
-            // }
-            // std::cout << std::endl;
+    auto csrC_ss = csrA.multiply_suite_sparse(csrB);
 
-            auto csrA_cuda_vals = csrAA_cuda.get_values();
-            auto csrA_cusparse_vals = csrAA_mtl.get_values();
-            // for(int i = 0; i < csrAA_mtl.nnz; i++) {
-            //     if(std::abs(csrA_cusparse_vals[i] - csrA_cuda_vals[i]) > 10)
-            //     std::cout << std::setprecision(15) << csrA_cusparse_vals[i]  << " " <<  csrA_cuda_vals[i] << " i= " << i << std::endl;
-            // }
+    auto csrC_impala = csrA.multiply_impala(csrB);
+
+    // std::cout << csrC_impala.nnz << std::endl;
+    // std::cout << csrC_impala.M << std::endl;
+
+    // std::cout << "C csr offsets: ";
+    // for (int i = 0; i < csrC_impala.M + 1; i++) {
+    //     std::cout << csrC_impala.get_row_index()[i] << " ";
+    // }
+    // std::cout << std::endl;
+
+    // auto csrC_impala = csrA.multiply_impala(csrA);
+
+    std::cout << csrC_ss.nnz << std::endl;
+    std::cout << csrC_ss.M << std::endl;
+    std::cout << csrC_ss.N << std::endl;
 
 
-            // assert(csrAA_cuda.get_values() == csrAA_mtl.get_values());
-            // for(const auto elem : csrA.get_cols()) {
-            //     std::cout << elem << " ";
-            // }
-            // std::cout << std::endl;
-            // std::cout << csrAA_cuda;
-            // std::cout << csrAA_mtl;
-            assert(csrAA_cuda.get_cols() == csrAA_mtl.get_cols() && "cols are not equal");
-            assert(csrAA_cuda == csrAA_mtl && "Matricies are not eq");
-            // assert(csrA == csrA);
-        }
+    std::cout << csrC_impala.nnz << std::endl;
+    std::cout << csrC_impala.M << std::endl;
+    std::cout << csrC_impala.N << std::endl;
+    // std::cout << csrC_impala.nnz << std::endl;
 
-        // auto csrCcusparse = csrA.multiply_cusparse(csrB);
-        // assert(csrCcusparse == csrC);
+    for(auto i : csrC_impala.get_row_index()) {
+        std::cout << i << " ";
+    }
+    std::cout << std::endl;
 
-        
-        
 
+    for(auto i : csrC_ss.get_row_index()) {
+        std::cout << i << " ";
+    }
+    std::cout << std::endl;
+    
+    assert(csrC_ss  == csrC_impala);
+    // OK(GrB_finalize());
 }
 
 
-//TODO write equality test for CSR, write multiplication handle valgrind
-//multiply sparse stuff;
+//TODO: handle empty matricies, write impala code up to the end, so the only thing
+// is used from c++ is matrix reader and thrust, todo spmm decompose impala
+// benchmark 
+// think about design e.g.
+/* struct Semiring {
+    zero : fn() -> f32, 
+    one : fn() -> f32,
+    plus : fn(f32,f32) -> f32,
+    multiply : fn(f32,f32) -> f32
+}*/
+
+// Maybe change intel mkl for suite sparse graphblas
+// abstract over implementation of multiplication and matrix representation
+// PRESENTATION 
+
+//rewrite impala add graphblas
+
+//benchmark

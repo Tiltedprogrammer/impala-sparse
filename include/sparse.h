@@ -15,7 +15,11 @@ struct CSR {
     unsigned int* row_index;
 };
 
-unsigned int get_nnz(struct CSR const* cst);
+unsigned int get_nnz(struct CSR const*);
+
+struct CSR spGEMMsimple(struct CSR const*,struct CSR const*);
+struct CSR spGEMMimpala(struct CSR const*,struct CSR const*);
+
 
 #ifdef __cplusplus
 }
