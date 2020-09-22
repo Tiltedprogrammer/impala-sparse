@@ -40,7 +40,7 @@ int main(int argc, char ** argv) {
 
     auto csrC_ss = csrA.multiply_suite_sparse(csrB);
 
-    auto csrC_impala = csrA.multiply_impala(csrB);
+    auto csrC_impala = csrA.multiply_cuda(csrB);
 
     // std::cout << csrC_impala.nnz << std::endl;
     // std::cout << csrC_impala.M << std::endl;

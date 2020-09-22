@@ -32,23 +32,14 @@ struct Semiring [T] {
 
 
 
-//decompose
-
-//multiply simple
-//multiply
-
-//preprosess rows
-
 #[export]
-fn prefixSum(start : &mut[u32],end : u32) -> ();
+fn prefixSum(_start : &mut[u32], _end : u32) -> ();
 
-//prefix sum
-//spGemm
 
 fn copy_csr_toDevice[T](source : &CSR[T], dst : &CSR[T]) -> () {
-    runtime_copy(runtime_device(0, 0), source.values as &[i8], 0i64, runtime_device(1, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[T]());
-    runtime_copy(runtime_device(0, 0), source.cols as &[i8], 0i64, runtime_device(1, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[u32]());
-    runtime_copy(runtime_device(0, 0), source.row_index as &[i8], 0i64, runtime_device(1, 0), dst.row_index as &[i8], 0i64, (dst.M + 1u32) as i64 * sizeof[u32]());
+    runtime_copy(runtime_device(0, 0), source.values as &[i8], 0:i64, runtime_device(1, 0), dst.values as &mut[i8], 0:i64, dst.nnz as i64 * sizeof[T]());
+    runtime_copy(runtime_device(0, 0), source.cols as &[i8], 0:i64, runtime_device(1, 0), dst.cols as &mut[i8], 0:i64, dst.nnz as i64 * sizeof[u32]());
+    runtime_copy(runtime_device(0, 0), source.row_index as &[i8], 0:i64, runtime_device(1, 0), dst.row_index as &mut[i8], 0:i64, (dst.M + 1:u32) as i64 * sizeof[u32]());
     
 }
 
@@ -67,9 +58,9 @@ fn release_csr_Host[T](csr : &CSR[T])-> () {
 }
 
 fn copy_csr_toHost[T](source : &CSR[T], dst : &CSR[T]) -> (){
-    runtime_copy(runtime_device(1, 0), source.values as &[i8], 0i64, runtime_device(0, 0), dst.values as &[i8], 0i64, dst.nnz as i64 * sizeof[T]());
-    runtime_copy(runtime_device(1, 0), source.cols as &[i8], 0i64, runtime_device(0, 0), dst.cols as &[i8], 0i64, dst.nnz as i64 * sizeof[u32]());
-    runtime_copy(runtime_device(1, 0), source.row_index as &[i8], 0i64, runtime_device(0, 0), dst.row_index as &[i8], 0i64, (dst.M + 1u32) as i64 * sizeof[u32]());
+    runtime_copy(runtime_device(1, 0), source.values as &[i8], 0:i64, runtime_device(0, 0), dst.values as &mut[i8], 0:i64, dst.nnz as i64 * sizeof[T]());
+    runtime_copy(runtime_device(1, 0), source.cols as &[i8], 0:i64, runtime_device(0, 0), dst.cols as &mut[i8], 0:i64, dst.nnz as i64 * sizeof[u32]());
+    runtime_copy(runtime_device(1, 0), source.row_index as &[i8], 0:i64, runtime_device(0, 0), dst.row_index as &mut[i8], 0:i64, (dst.M + 1:u32) as i64 * sizeof[u32]());
 }
 
 fn getThreadId() -> i32 {
@@ -79,10 +70,10 @@ fn getThreadId() -> i32 {
 }
 
 fn minimum(l : u32, r : u32) -> u32{
-    if r == 0u32{ 
+    if r == 0:u32{ 
         return(l)
     }
-    else if l == 0u32 { 
+    else if l == 0:u32 { 
         return(r)
     }
     else {
@@ -95,83 +86,60 @@ fn minimum(l : u32, r : u32) -> u32{
     }
 }
 
-//works fine
 fn WarpMin(mask : u32, value : u32) -> u32{
-    let mut offset = 16u32;
+    let mut offset = 16:u32;
     let mut tmp_val = value;
-    while (offset > 0u32) {
+    while (offset > 0:u32) {
         tmp_val = minimum(tmp_val, cuda_warp_shfl_up_u32(mask, tmp_val, offset, 32));
-        offset = offset / 2u32;
+        offset = offset / 2:u32;
     }
     return (tmp_val)
 }
 
+fn WarpBinOpShared[T](sData : &mut addrspace(3)[T], laneId : u32, lastLaneId : u32, s : Semiring[T]) -> T{
 
-//should be generic and replaceable 
-fn WarpBinOp[T](mask : u32, value : T, binOp : fn(T,T) -> T, zero : fn() -> T, laneId : u32) -> T {
-    let mut offset = 16u32;
-    let mut tmp_val = value;
-    while (offset > 0u32) {
-        //think about reduction??
-        //replace for shared mem
-        let mut shfl = cuda_warp_shfl_up_f32(mask, tmp_val, offset, 32);
-        if offset > laneId {
-            shfl = zero();
+    let mut offset = 16:u32;
+    if laneId <= lastLaneId {
+        while (offset > 0:u32) {
+            if offset <= laneId {sData(laneId) = s.plus(sData(laneId), sData(laneId - offset))};
+            cuda_syncthreads();
+            offset = offset / 2:u32;
         }
-        tmp_val = binOp(tmp_val,shfl);//tmp_val + cuda_warp_shfl_down_f32(mask, tmp_val, offset, 32);
-        offset = offset / 2u32;
+
     }
-    return (tmp_val)
+    sData(lastLaneId)
 }
 
 
-
-
-fn WarpSum(mask : u32, value : f32, laneId : u32) -> f32 {
-    let mut offset = 16u32;
-    let mut tmp_val = value;
-    while (offset > 0u32) {
-        //think about reduction??
-        let mut shfl = cuda_warp_shfl_up_f32(mask, tmp_val, offset, 32);
-        if offset > laneId {
-            shfl = 0.0f32;
-        }
-        tmp_val = tmp_val + shfl;
-        offset = offset / 2u32;
-    }
-    return (tmp_val)
-}
-
-
-fn preprosessRows(a : CSR, b : CSR, cRows : &mut[u32]) -> () {
+fn preprosessRows[T](a : CSR[T], b : CSR[T], cRows : &mut[u32]) -> () {
     
     let mut grid = (1,1,1);
     let block = (32,1,1);
 
-    let k = (a.M / 65535u32) + 1u32;
+    let mut k = (a.M / 65535:u32) + 1:u32;
 
 
-    if k > 1u32 {
-        grid(0) = 65535;
-        if k > 65535u32 {
-            grid(1) = 65535;
-        } else {
-            grid(1) = k as i32;
+    if k > 1:u32 {
+        // grid(0) = 65535;
+        if k > 65535:u32 {
+            k = 65535;
         }
+        grid = (65535 * 32,k as i32,1);
     } else {
-        grid(0) = a.M as i32;
+        grid = ((a.M as i32) * 32,1,1);
+        // grid(0) = a.M as i32;
     }
     
 
-    grid(0) = grid(0) * block(0);
+    // grid(0) = grid(0) * block(0);
     
-    with cuda(0,grid,block) {
-        let full_mask : u32 = 0xffffffffu32;
+    cuda(0,grid,block, || {
+        let full_mask : u32 = 0xffffffff:u32;
 
         let threadId = getThreadId();
 
         let warpId = threadId / 32; //threadId / 32;
-        let laneId = cuda_threadIdx_x() as u32 % 32u32;
+        let laneId = cuda_threadIdx_x() as u32 % 32:u32;
 
         if warpId as u32 < a.M {
 
@@ -179,11 +147,8 @@ fn preprosessRows(a : CSR, b : CSR, cRows : &mut[u32]) -> () {
             let aStart = a.row_index(warpId);
             let aEnd = a.row_index(warpId + 1);
 
-            
 
-            // let mut mask : u32 = 0u32;
-
-            let mut tmp = 0u32;
+            let mut tmp = 0:u32;
 
             let mask_flag = if aStart + laneId < aEnd {1} else {0};
             let mask = cuda_warp_sync_vote(full_mask, mask_flag); //0 if the row is empty
@@ -194,36 +159,36 @@ fn preprosessRows(a : CSR, b : CSR, cRows : &mut[u32]) -> () {
 
                 let mut rowPos = b.row_index(bRowId);
                 
-                let mut while_flag = if rowPos < b.row_index(bRowId + 1u32) {1} else {0};
+                let mut while_flag = if rowPos < b.row_index(bRowId + 1:u32) {1} else {0};
 
                 let mut while_loop = cuda_warp_sync_any(mask, while_flag) == 1;
                 
                 while (while_loop) {
-                    let front_col = if rowPos < b.row_index(bRowId + 1u32) {b.cols(rowPos) + 1u32} else {0u32};
+                    let front_col = if rowPos < b.row_index(bRowId + 1:u32) {b.cols(rowPos) + 1:u32} else {0:u32};
 
                     let mut frontColMin = WarpMin(mask,front_col);
                     frontColMin = cuda_warp_shfl_u32(mask, frontColMin, cuda_popc_u32(mask) - 1, 32);
                     
                     if front_col == frontColMin {
-                        rowPos = rowPos + 1u32;
+                        rowPos = rowPos + 1:u32;
                     
                     }
-                    tmp = tmp + 1u32;
-                    while_flag = if rowPos < b.row_index(bRowId + 1u32) {1} else {0};
+                    tmp = tmp + 1:u32;
+                    while_flag = if rowPos < b.row_index(bRowId + 1:u32) {1} else {0};
                     while_loop = cuda_warp_sync_any(mask, while_flag) == 1;
                 }
 
                 
             }
-            if laneId == 0u32 {
-                if mask == 0u32 { //empty row
-                    cRows(warpId + 1) = 0u32;
+            if laneId == 0:u32 {
+                if mask == 0:u32 { //empty row
+                    cRows(warpId + 1) = 0:u32;
                 } else {
-                    cRows(warpId as i32 + 1) = tmp;    
+                    cRows(warpId + 1) = tmp;    
                 }
             }
         }
-    }
+    });
 
     synchronize_cuda(0);
 
@@ -231,45 +196,39 @@ fn preprosessRows(a : CSR, b : CSR, cRows : &mut[u32]) -> () {
 }
 
 
-fn spGEMMimpala_device(a : CSR, b : CSR, c : CSR) -> () {
+
+fn spGEMMimpala_device[T](a : CSR[T], b : CSR[T], c : CSR[T], s : Semiring[T]) -> () {
     
     let mut grid = (1,1,1);
     let block = (32,1,1);
 
-    let k = (a.M / 65535u32) + 1u32;
+    let mut k = (a.M / 65535:u32) + 1:u32;
 
-    if k > 1u32 {
-        grid(0) = 65535;
-        if k > 65535u32 {
-            grid(1) = 65535;
-        } else {
-            grid(1) = k as i32;
+
+    if k > 1:u32 {
+        if k > 65535:u32 {
+            k = 65535;
         }
+        grid = (65535 * 32,k as i32,1);
     } else {
-        grid(0) = a.M as i32;
+        grid = ((a.M as i32) * 32,1,1);
     }
-
-    grid(0) = grid(0) * block(0);
     
-    with cuda(0,grid,block) {
-        let full_mask : u32 = 0xffffffffu32;
+    cuda(0,grid,block,|| {
+        let full_mask : u32 = 0xffffffff:u32;
 
+        let sData = reserve_shared[T](32);
         let threadId = getThreadId();
 
         let warpId = threadId / 32; //threadId / 32;
-        let laneId = cuda_threadIdx_x() as u32 % 32u32;
+        let laneId = cuda_threadIdx_x() as u32 % 32:u32;
 
         if warpId as u32 < a.M {
-
 
             let aStart = a.row_index(warpId);
             let aEnd = a.row_index(warpId + 1);
 
-            
-
-            // let mut mask : u32 = 0u32;
-
-            let mut tmp = 0.0f32;
+            let mut tmp = s.zero();
 
             let mask_flag = if aStart + laneId < aEnd {1} else {0};
             let mask = cuda_warp_sync_vote(full_mask, mask_flag); //0 if the row is empty
@@ -282,68 +241,51 @@ fn spGEMMimpala_device(a : CSR, b : CSR, c : CSR) -> () {
 
                 let mut rowPos = b.row_index(bRowId);
                 
-                let mut while_flag = if rowPos < b.row_index(bRowId + 1u32) {1} else {0};
+                let mut while_flag = if rowPos < b.row_index(bRowId + 1:u32) {1} else {0};
 
                 let mut while_loop = cuda_warp_sync_any(mask, while_flag) == 1;
                 
-                let mut currentCol = 0u32;
+                let mut currentCol = 0:u32;
 
                 while (while_loop) {
-                    // cuda_vprintf("asdv\n%u32","laneId");
-                    let front_col = if rowPos < b.row_index(bRowId + 1u32) {b.cols(rowPos) + 1u32} else {0u32};
-                    let front_val = if rowPos < b.row_index(bRowId + 1u32) {b.values(rowPos)} else {0.0f32};
+
+                    let front_col = if rowPos < b.row_index(bRowId + 1:u32) {b.cols(rowPos) + 1:u32} else {0:u32};
+                    let front_val = if rowPos < b.row_index(bRowId + 1:u32) {b.values(rowPos)} else {s.zero()};
 
                     let mut frontColMin = WarpMin(mask,front_col);
                     frontColMin = cuda_warp_shfl_u32(mask, frontColMin, cuda_popc_u32(mask) - 1, 32);
                     
                     if front_col == frontColMin {
-                        rowPos = rowPos + 1u32;
-                        tmp = front_val * row_weight; //todo semiring
-                        // tmp = front_val + row_weight;
+                        rowPos = rowPos + 1:u32;
+                        tmp = s.multiply(front_val,row_weight); //todo semiring
                     
                     } else {
-                        tmp = 0.0f32;
+                        tmp = s.zero();
                     }
-                    // let mut sum = WarpSum(mask,tmp,laneId);
-                    let mut sum = WarpBinOp(mask,tmp,|x : f32, y : f32| x + y, || 0.0f32, laneId);
-                    // let mut sum = WarpBinOp(mask,tmp,|x : f32, y : f32| if x > y {x} else {y}, || 1.175494e-37f32, laneId);
-                    sum = cuda_warp_shfl_f32(mask, sum, cuda_popc_u32(mask) - 1, 32);
-                    
-                    if laneId == 0u32 {
+
+                    cuda_syncthreads();
+                    let sum = WarpBinOpShared(sData,laneId,cuda_popc_u32(mask) as u32 - 1:u32,s);
+                
+                    if laneId == 0:u32 {
                         c.values(c.row_index(warpId) as i32 + currentCol as i32) = sum;
-                        c.cols(c.row_index(warpId) as i32 + currentCol as i32) = frontColMin - 1u32;
+                        c.cols(c.row_index(warpId) as i32 + currentCol as i32) = frontColMin - 1:u32;
                     }
                     
-                    while_flag = if rowPos < b.row_index(bRowId + 1u32) {1} else {0};
+                    while_flag = if rowPos < b.row_index(bRowId + 1:u32) {1} else {0};
                     while_loop = cuda_warp_sync_any(mask, while_flag) == 1;
 
-                    currentCol = currentCol + 1u32;
+                    currentCol = currentCol + 1:u32;
                 }
-
-                
             }
         }
-    }
+    });
 
     synchronize_cuda(0);
 
-
 }
 
-fn maxRowLength(a : &CSR) -> u32 {
 
-    let mut maxRow = 0u32;
-
-    for r in range(0,(*a).M as i32){
-        if (*a).row_index(r+1) - (*a).row_index(r) > maxRow {
-            maxRow = (*a).row_index(r+1) - (*a).row_index(r);
-        }
-    }
-
-    return(maxRow)
-}
-
-fn spGEMMdecompose(a : CSR) -> (CSR,CSR) {
+fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
 
     let warpSize = 32;
     let mut new_rows = 0;
@@ -362,30 +304,30 @@ fn spGEMMdecompose(a : CSR) -> (CSR,CSR) {
     }
 
     let GCsrOffsets = alloc_cpu((new_rows + 1) as i64 * sizeof[u32]()).data as &mut[u32];
-    GCsrOffsets(0) = 0u32;
-    let GValues = alloc_cpu(a.nnz as i64 * sizeof[f32]()).data as &mut[f32];
+    GCsrOffsets(0) = 0:u32;
+    let GValues = alloc_cpu(a.nnz as i64 * sizeof[T]()).data as &mut[T];
     let GCols = alloc_cpu(a.nnz as i64 * sizeof[u32]()).data as &mut[u32];
 
 
     //copy values and cols to GCols and GValues
 
-    runtime_copy(runtime_device(0, 0), a.cols as &[i8], 0i64, runtime_device(0, 0), GCols as &[i8], 0i64, (a.nnz) as i64 * sizeof[u32]()); // 4 or 1?
-    runtime_copy(runtime_device(0, 0), a.values as &[i8], 0i64, runtime_device(0, 0), GValues as &[i8], 0i64, (a.nnz) as i64 * sizeof[u32]()); // 4 or 1?
+    runtime_copy(runtime_device(0, 0), a.cols as &[i8], 0:i64, runtime_device(0, 0), GCols as &mut[i8], 0:i64, (a.nnz) as i64 * sizeof[u32]()); // 4 or 1?
+    runtime_copy(runtime_device(0, 0), a.values as &[i8], 0:i64, runtime_device(0, 0), GValues as &mut[i8], 0:i64, (a.nnz) as i64 * sizeof[T]()); // 4 or 1?
 
 
-    let A1CsrOffsets = alloc_cpu((a.M + 1u32) as i64 * sizeof[u32]()).data as &mut[u32];
-    A1CsrOffsets(0) = 0u32;
+    let A1CsrOffsets = alloc_cpu((a.M + 1:u32) as i64 * sizeof[u32]()).data as &mut[u32];
+    A1CsrOffsets(0) = 0:u32;
     let A1Cols = alloc_cpu(new_rows as i64 * sizeof[u32]()).data as &mut[u32];
-    let A1Values = alloc_cpu(new_rows as i64 * sizeof[f32]()).data as &mut[f32];
+    let A1Values = alloc_cpu(new_rows as i64 * sizeof[T]()).data as &mut[T];
     
 
     let mut GRowIdx = 0; 
-    let mut A1Col = 0u32;
+    let mut A1Col = 0:u32;
     let mut A1Val = 0;
 
     for r in range(0,a.M as i32) {
         let row_length = a.row_index(r+1) - a.row_index(r);
-        let mut A1_row_length = 0u32;
+        let mut A1_row_length = 0:u32;
         if row_length > warpSize as u32 {
 
             let mut rowStart = a.row_index(r);
@@ -393,16 +335,16 @@ fn spGEMMdecompose(a : CSR) -> (CSR,CSR) {
             
             while(rowStart < rowEnd) {
                 if rowStart + warpSize as u32 > rowEnd {
-                    GCsrOffsets(GRowIdx + 1) = rowStart + row_length as u32 - (warpSize as u32 * A1_row_length);
+                    GCsrOffsets(GRowIdx + 1) = rowStart + row_length - (warpSize as u32 * A1_row_length);
                     rowStart = rowStart + warpSize as u32;
                 } else {
                     rowStart = rowStart + warpSize as u32;
                     GCsrOffsets(GRowIdx + 1) = rowStart;
                 }
-                A1_row_length = A1_row_length + 1u32;
-                A1Values(A1Val) = 1.0f32;
+                A1_row_length = A1_row_length + 1:u32;
+                A1Values(A1Val) = s.one();
                 A1Cols(A1Val) = A1Col;
-                A1Col = A1Col + 1u32;
+                A1Col = A1Col + 1:u32;
                 
                 A1Val = A1Val + 1;
                 GRowIdx = GRowIdx + 1;
@@ -410,12 +352,12 @@ fn spGEMMdecompose(a : CSR) -> (CSR,CSR) {
             }
 
         } else {
-            A1_row_length = 1u32;
+            A1_row_length = 1:u32;
             GCsrOffsets(GRowIdx + 1) = a.row_index(r+1);
-            A1Values(A1Val) = 1.0f32;
+            A1Values(A1Val) = s.one();
             A1Cols(A1Val) = A1Col;
             
-            A1Col = A1Col + 1u32;    
+            A1Col = A1Col + 1:u32;    
             A1Val = A1Val + 1;
             GRowIdx = GRowIdx + 1;
                 
@@ -423,97 +365,109 @@ fn spGEMMdecompose(a : CSR) -> (CSR,CSR) {
         A1CsrOffsets(r+1) = A1CsrOffsets(r) + A1_row_length;
     }
 
-    let csrG = CSR {N : a.N, M : new_rows as u32, nnz : a.nnz, values : GValues, cols : GCols, row_index : GCsrOffsets};
-    let csrA1 = CSR {N : new_rows as u32, M : a.M, nnz : new_rows as u32, values : A1Values, cols : A1Cols, row_index : A1CsrOffsets};
+    let csrG = CSR [T]{N = a.N, M = new_rows as u32, nnz = a.nnz, values = GValues, cols = GCols, row_index = GCsrOffsets};
+    let csrA1 = CSR [T]{N = new_rows as u32, M = a.M, nnz = new_rows as u32, values = A1Values, cols = A1Cols, row_index = A1CsrOffsets};
     
     (csrA1,csrG)
 }
 
-extern
-fn spGEMMimpala(a : &CSR, b : &CSR)  -> CSR {
-    let warpSize = 32u32;
+fn maxRowLength[T](a : &CSR[T]) -> u32 {
 
-    let mut res : &CSR = 0 as &CSR;
+    let mut maxRow = 0:u32;
 
-    if maxRowLength(*a) <= warpSize 
+    for r in range(0,(*a).M as i32){
+        if (*a).row_index(r+1) - (*a).row_index(r) > maxRow {
+            maxRow = (*a).row_index(r+1) - (*a).row_index(r);
+        }
+    }
+
+    return(maxRow)
+}
+
+fn spGEMMimpala[T](a : &CSR[T], b : &CSR[T],s : Semiring[T])  -> CSR[T] {
+    
+    let warpSize = 32:u32;
+
+    let mut res : &CSR[T] = 0 as &CSR[T];
+
+    if maxRowLength[T](*a) <= warpSize 
     {
-        res = &spGEMMsimple(a,b);
+        res = &spGEMMsimple[T](a,b,s);
     }
     else {
 
-        let (a1,g) = spGEMMdecompose(*a);
+        let (a1,g) = spGEMMdecompose[T](*a,s);
         // let (a2,g2) = spGEMMdecompose(a1);
         // let (a3,g3) = spGEMMdecompose(a2);
 
-        let c = spGEMMsimple(&g,b); //need to free g
-        release_csr_Host(&g);
+        let c = spGEMMsimple[T](&g,b,s); //need to free g
+        release_csr_Host[T](&g);
         
-        res = &spGEMMimpala(&a1,&c);
-        release_csr_Host(&a1);
-        release_csr_Host(&c);
+        res = &spGEMMimpala[T](&a1,&c,s);
+        release_csr_Host[T](&a1);
+        release_csr_Host[T](&c);
     }
 
     return(*res)
 }
 
-extern
-fn spGEMMsimple(a : &CSR, b : &CSR) -> CSR {
+
+fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
     
-    let aDevice = CSR {N : (*a).N, M : (*a).M, nnz : (*a).nnz, values : alloc_cuda(0,(*a).nnz as i64 * sizeof[f32]()).data as &mut[f32], cols : alloc_cuda(0,(*a).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index : alloc_cuda(0,((*a).M + 1u32) as i64 * sizeof[i32]()).data as &mut[u32]};
-    let bDevice = CSR {N : (*b).N, M : (*b).M, nnz : (*b).nnz, values : alloc_cuda(0,(*b).nnz as i64 * sizeof[f32]()).data as &mut[f32], cols : alloc_cuda(0,(*b).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index : alloc_cuda(0,((*b).M + 1u32) as i64 * sizeof[i32]()).data as &mut[u32]};
-    //copy a to aDevice
-
-    copy_csr_toDevice(a,&aDevice);
-    copy_csr_toDevice(b,&bDevice);
-
-    let cDeviceRows = alloc_cuda(0,((*a).M + 1u32) as i64 * sizeof[i32]());
+    let aDevice = CSR[T] {N = (*a).N, M = (*a).M, nnz = (*a).nnz, values = alloc_cuda(0,(*a).nnz as i64 * sizeof[T]()).data as &mut[T], cols = alloc_cuda(0,(*a).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index = alloc_cuda(0,((*a).M + 1:u32) as i64 * sizeof[i32]()).data as &mut[u32]};
+    let bDevice = CSR[T] {N = (*b).N, M = (*b).M, nnz = (*b).nnz, values = alloc_cuda(0,(*b).nnz as i64 * sizeof[T]()).data as &mut[T], cols = alloc_cuda(0,(*b).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index = alloc_cuda(0,((*b).M + 1:u32) as i64 * sizeof[i32]()).data as &mut[u32]};
     
-    preprosessRows(aDevice,bDevice,cDeviceRows.data as &mut[u32]); 
+    copy_csr_toDevice[T](a,&aDevice);
+    copy_csr_toDevice[T](b,&bDevice);
+
+    let cDeviceRows = alloc_cuda(0,((*a).M + 1:u32) as i64 * sizeof[i32]());
     
-    prefixSum(cDeviceRows.data as &mut[u32], (*a).M + 1u32);
+    preprosessRows[T](aDevice,bDevice,cDeviceRows.data as &mut[u32]); 
+    
+    prefixSum(cDeviceRows.data as &mut[u32], (*a).M + 1:u32);
 
 
-    let cHostRows = alloc_cpu(((*a).M + 1u32) as i64 * sizeof[i32]());
+    let cHostRows = alloc_cpu(((*a).M + 1:u32) as i64 * sizeof[i32]());
     let cHostRowsData = cHostRows.data as &mut[u32];
-    cHostRowsData(0) = 0u32;
+    cHostRowsData(0) = 0:u32;
 
-    //copy rows to host
-    runtime_copy(runtime_device(1, 0), cDeviceRows.data as &[i8], 4i64, runtime_device(0, 0), cHostRowsData as &[i8], 4i64, (aDevice.M) as i64 * sizeof[u32]()); // 4 or 1?
+    
+    runtime_copy(runtime_device(1, 0), cDeviceRows.data, 4:i64, runtime_device(0, 0), cHostRowsData as &mut[i8], 4:i64, (aDevice.M) as i64 * sizeof[u32]()); // 4 or 1?
 
     let cNnz = cHostRowsData((*a).M); //handle zero
 
 
-    if cNnz == 0u32 {
-        let cHostValues = alloc_cpu(cNnz as i64 * sizeof[f32]());
-        let cHostCols = alloc_cpu(cNnz as i64 * sizeof[f32]());
-        let cHost = CSR {N : (*b).N, M : (*a).M, nnz : cNnz, values : cHostValues.data as &mut[f32], cols : cHostCols.data as &mut[u32], row_index : cHostRows.data as &mut[u32]};
+    if cNnz == 0:u32 {
+        let cHostValues = alloc_cpu(cNnz as i64 * sizeof[T]());
+        let cHostCols = alloc_cpu(cNnz as i64 * sizeof[u32]());
+        let cHost = CSR[T] {N = (*b).N, M = (*a).M, nnz = cNnz, values = cHostValues.data as &mut[T], cols = cHostCols.data as &mut[u32], row_index = cHostRows.data as &mut[u32]};
         //free a,b, crows
 
-        release_csr_Device(&aDevice);
-        release_csr_Device(&bDevice);
+        release_csr_Device[T](&aDevice);
+        release_csr_Device[T](&bDevice);
 
         runtime_release(runtime_device(1, 0), cDeviceRows.data as &[i8]);    
         
         return (cHost)
     } else {
         let cDeviceCols = alloc_cuda(0,(cNnz as i64 * sizeof[i32]()));
-        let cDeviceValues = alloc_cuda(0,(cNnz as i64 * sizeof[i32]()));
+        let cDeviceValues = alloc_cuda(0,(cNnz as i64 * sizeof[T]()));
         
-        let cDevice = CSR {N : (*b).N, M : (*a).M, nnz : cNnz, values : cDeviceValues.data as &mut[f32], cols : cDeviceCols.data as &mut[u32], row_index : cDeviceRows.data as &mut[u32]};
+        let cDevice = CSR[T] {N = (*b).N, M = (*a).M, nnz = cNnz, values = cDeviceValues.data as &mut[T], cols = cDeviceCols.data as &mut[u32], row_index = cDeviceRows.data as &mut[u32]};
         
         
-        spGEMMimpala_device(aDevice,bDevice,cDevice);
+        spGEMMimpala_device[T](aDevice,bDevice,cDevice,s);
 
         let cHostValues = alloc_cpu(cNnz as i64 * sizeof[f32]());
         let cHostCols = alloc_cpu(cNnz as i64 * sizeof[f32]());
 
-        let cHost = CSR {N : (*b).N, M : (*a).M, nnz : cNnz, values : cHostValues.data as &mut[f32], cols : cHostCols.data as &mut[u32], row_index : cHostRows.data as &mut[u32]};
+        let cHost = CSR[T]{N = (*b).N, M = (*a).M, nnz = cNnz, values = cHostValues.data as &mut[T], cols = cHostCols.data as &mut[u32], row_index = cHostRows.data as &mut[u32]};
         
-        // copy_csr_toHost(&cDevice,&cHost);
+        copy_csr_toHost[T](&cDevice,&cHost);
         // copy c to host
-        runtime_copy(runtime_device(1, 0), cDeviceValues.data as &[i8], 0i64, runtime_device(0, 0), cHostValues.data as &[i8], 0i64, (cNnz) as i64 * sizeof[f32]()); // 4 or 1?
+        runtime_copy(runtime_device(1, 0), cDeviceValues.data, 0:i64, runtime_device(0, 0), cHostValues.data, 0:i64, (cNnz) as i64 * sizeof[T]()); // 4 or 1?
 
-        runtime_copy(runtime_device(1, 0), cDeviceCols.data as &[i8], 0i64, runtime_device(0, 0), cHostCols.data as &[i8], 0i64, (cNnz) as i64 * sizeof[u32]()); // 4 or 1?
+        runtime_copy(runtime_device(1, 0), cDeviceCols.data, 0:i64, runtime_device(0, 0), cHostCols.data, 0:i64, (cNnz) as i64 * sizeof[u32]()); // 4 or 1?
 
 
         //release c
@@ -521,12 +475,19 @@ fn spGEMMsimple(a : &CSR, b : &CSR) -> CSR {
         runtime_release(runtime_device(1, 0), cDeviceRows.data as &[i8]);
         runtime_release(runtime_device(1, 0), cDeviceCols.data as &[i8]);
         //cudaFree
-        release_csr_Device(&aDevice);
-        release_csr_Device(&bDevice);
+        release_csr_Device[T](&aDevice);
+        release_csr_Device[T](&bDevice);
         // release_csr_Device(&cDevice);
         
         return(cHost)    
     
     }
 
+}
+
+#[export]
+fn main() -> i32{
+
+    print_string("Hello\n");
+    0
 }

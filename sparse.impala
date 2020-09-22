@@ -118,6 +118,20 @@ fn WarpMin(mask : u32, value : u32) -> u32{
 }
 
 
+fn WarpBinOpShared(sData : &mut[3][f32], laneId : u32, lastLaneId : u32) -> f32{
+
+    let mut offset = 16u32;
+    if laneId <= lastLaneId {
+        while (offset > 0u32) {
+            if offset <= laneId {sData(laneId) = sData(laneId) + sData(laneId - offset)};
+            cuda_syncthreads();
+            offset = offset / 2u32;
+        }
+
+    }
+    sData(lastLaneId)
+}
+
 //should be generic and replaceable 
 fn WarpBinOp(mask : u32, value : f32, binOp : fn(f32,f32) -> f32, zero : fn() -> f32, laneId : u32) -> f32 {
     let mut offset = 16u32;
@@ -151,6 +165,7 @@ fn WarpSum(mask : u32, value : f32, laneId : u32) -> f32 {
     }
     return (tmp_val)
 }
+
 
 
 fn preprosessRows(a : CSR, b : CSR, cRows : &mut[u32]) -> () {
@@ -264,6 +279,8 @@ fn spGEMMimpala_device(a : CSR, b : CSR, c : CSR) -> () {
     with cuda(0,grid,block) {
         let full_mask : u32 = 0xffffffffu32;
 
+        let sData = reserve_shared[f32](32);
+
         let threadId = getThreadId();
 
         let warpId = threadId / 32; //threadId / 32;
@@ -309,15 +326,20 @@ fn spGEMMimpala_device(a : CSR, b : CSR, c : CSR) -> () {
                     if front_col == frontColMin {
                         rowPos = rowPos + 1u32;
                         tmp = front_val * row_weight; //todo semiring
+                        sData(laneId) = tmp;
                         // tmp = front_val + row_weight;
                     
                     } else {
                         tmp = 0.0f32;
+                        sData(laneId) = tmp;
                     }
+
+                    cuda_syncthreads();
                     // let mut sum = WarpSum(mask,tmp,laneId);
-                    let mut sum = WarpBinOp(mask,tmp,|x : f32, y : f32| x + y, || 0.0f32, laneId);
+                    // let mut sum = WarpBinOp(mask,tmp,|x : f32, y : f32| x + y, || 0.0f32, laneId);
                     // let mut sum = WarpBinOp(mask,tmp,|x : f32, y : f32| if x > y {x} else {y}, || 1.175494e-37f32, laneId);
-                    sum = cuda_warp_shfl_f32(mask, sum, cuda_popc_u32(mask) - 1, 32);
+                    // sum = cuda_warp_shfl_f32(mask, sum, cuda_popc_u32(mask) - 1, 32);
+                    let sum = WarpBinOpShared(sData,laneId,cuda_popc_u32(mask) as u32 - 1u32);
                     
                     if laneId == 0u32 {
                         c.values(c.row_index(warpId) as i32 + currentCol as i32) = sum;

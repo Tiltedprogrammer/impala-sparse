@@ -61,6 +61,23 @@ __device__ float WarpSum (unsigned int mask,float value, int laneId){
      return value ;
 }
 
+__device__ float WarpSumShared (float * sData, int laneId, int lastLaneId) {
+    
+    // float value = 0.0;
+    // float shfl = 0.0;
+    if (laneId <= lastLaneId) {
+        for (int offset = 16; offset > 0; offset/=2){
+            if (offset <= laneId) sData[laneId] += sData[laneId - offset];
+            // else shfl = sData[laneId] + sData[laneId - offset];
+            // sData[laneId] += shfl;
+            __syncthreads();
+        }
+    }   
+
+    return sData[lastLaneId];
+
+}
+
 
 //maybe indexing from 1
 
@@ -153,6 +170,8 @@ __global__ void spGEMMDevice(struct CSR a, struct CSR b, struct CSR c) {
     int warpId = threadId / 32; //is rowId
     int laneId = threadIdx.x % 32;
 
+    extern __shared__ float sData[]; //array to reduce sums
+
     if(warpId < a.M) {
 
         int aStart = a.row_index[warpId];
@@ -189,13 +208,17 @@ __global__ void spGEMMDevice(struct CSR a, struct CSR b, struct CSR c) {
                 if(frontCol == frontColMin) {
                     rowPos++;
                     tmp = frontVal * rowWeight;
+                    sData[laneId] = tmp;
                     // printf("LaneID=%i, a=%f,b=%f,tmp=%f\n",laneId,rowWeight,frontVal,tmp);
                 } else {
                     tmp = 0.0;
+                    sData[laneId] = tmp;
                 }
 
-                float sum = WarpSum(mask,tmp,laneId);
-                sum = __shfl_sync(mask,sum,0); //broadcast
+                __syncthreads();
+
+                float sum = WarpSumShared(sData,laneId,__popc(mask) - 1);
+                // sum = __shfl_sync(mask,sum,0); //broadcast
                 
                 if(laneId == 0){
                     // printf("LaneId=%i\n",laneId);
@@ -302,7 +325,7 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
     cDevice.cols = (unsigned int*)dC_columns;
     
     
-    spGEMMDevice<<<grid,32>>>(aDevice,bDevice,cDevice);
+    spGEMMDevice<<<grid,32,32>>>(aDevice,bDevice,cDevice);
 
     cudaDeviceSynchronize();
 

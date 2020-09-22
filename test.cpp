@@ -29,9 +29,33 @@ TEST(TestForTest, TestOne){
     ASSERT_EQ(1,1);
 }
 
-TEST(TestCudaImpalaMultiplication, Test1) {
-    GrB_Info info;
-    OK(GrB_init(GrB_BLOCKING));
+TEST(TestCudaMultiplicationSimple, Test1) {
+    // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
+    TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests");
+    
+    for (const auto& path : tm.matrix_paths) {
+        if(!fs::is_directory(path)){
+            std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
+                << "Launching test for "<< path << std::endl;
+            std::ifstream is(path);
+            auto csr = CSRWrapper<float>(is);
+                 // std::cerr << "Launching test for " << path << std::endl;
+            // auto csr_cuda = csr.multiply_cuda(csr);
+            auto csr_cuda = csr.multiply_cuda(csr);
+            auto csr_ss = csr.multiply_suite_sparse(csr);
+
+            ASSERT_TRUE(csr_cuda == csr_ss);
+            // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
+
+            
+            
+        } else {
+            ASSERT_TRUE(1==1);
+        }
+    }
+}
+
+TEST(TestCudaMultiplicationComplex, Test1) {
     // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
     TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/more_complex_tests");
     
@@ -43,10 +67,10 @@ TEST(TestCudaImpalaMultiplication, Test1) {
             auto csr = CSRWrapper<float>(is);
                  // std::cerr << "Launching test for " << path << std::endl;
             // auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_impala = csr.multiply_impala(csr);
-            auto csr_mkl = csr.multiply_suite_sparse(csr);
+            auto csr_cuda = csr.multiply_cuda(csr);
+            auto csr_ss = csr.multiply_suite_sparse(csr);
 
-            ASSERT_TRUE(csr_impala == csr_mkl);
+            ASSERT_TRUE(csr_cuda == csr_ss);
             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
 
             
@@ -55,9 +79,62 @@ TEST(TestCudaImpalaMultiplication, Test1) {
             ASSERT_TRUE(1==1);
         }
     }
-        OK(GrB_finalize ( )) ;
+}
+
+TEST(TestImpala,TestImpalaMultiplicationSimple) {
+    // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
+    TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests");
+    
+    for (const auto& path : tm.matrix_paths) {
+        if(!fs::is_directory(path)){
+            std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
+                << "Launching test for "<< path << std::endl;
+            std::ifstream is(path);
+            auto csr = CSRWrapper<float>(is);
+                 // std::cerr << "Launching test for " << path << std::endl;
+            // auto csr_cuda = csr.multiply_cuda(csr);
+            auto csr_impala = csr.multiply_impala(csr);
+            auto csr_ss = csr.multiply_suite_sparse(csr);
+
+            ASSERT_TRUE(csr_impala == csr_ss);
+            // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
+
+            
+            
+        } else {
+            ASSERT_TRUE(1==1);
+        }
+    }
 
 }
+
+
+// TEST(TestImpala,TestImpalaMultiplicationComplex) {
+//     // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
+//     TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/more_complex_tests");
+    
+//     for (const auto& path : tm.matrix_paths) {
+//         if(!fs::is_directory(path)){
+//             std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
+//                 << "Launching test for "<< path << std::endl;
+//             std::ifstream is(path);
+//             auto csr = CSRWrapper<float>(is);
+//                  // std::cerr << "Launching test for " << path << std::endl;
+//             // auto csr_cuda = csr.multiply_cuda(csr);
+//             auto csr_impala = csr.multiply_impala(csr);
+//             auto csr_mkl = csr.multiply_suite_sparse(csr);
+
+//             ASSERT_TRUE(csr_impala == csr_mkl);
+//             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
+
+            
+            
+//         } else {
+//             ASSERT_TRUE(1==1);
+//         }
+//     }
+
+// }
 
 // TEST(TestCudaMultiplication, Benchmark) {
 //     TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/benchmarks");
