@@ -10,14 +10,11 @@ struct CSR [T] {
 
 
 struct Semiring [T] {
-    zero : fn() -> T,
-    one : fn() -> T,
+    zero : T,
+    one : T,
     plus : fn(T,T) -> T,
     multiply : fn(T,T) -> T
 }
-
-//read matrix
-// turn on suitesparse
 
 //Won't work fow now
 // trait<T> Semiring{
@@ -32,7 +29,7 @@ struct Semiring [T] {
 
 
 
-#[export]
+#[import]
 fn prefixSum(_start : &mut[u32], _end : u32) -> ();
 
 
@@ -228,7 +225,7 @@ fn spGEMMimpala_device[T](a : CSR[T], b : CSR[T], c : CSR[T], s : Semiring[T]) -
             let aStart = a.row_index(warpId);
             let aEnd = a.row_index(warpId + 1);
 
-            let mut tmp = s.zero();
+            let mut tmp = s.zero;
 
             let mask_flag = if aStart + laneId < aEnd {1} else {0};
             let mask = cuda_warp_sync_vote(full_mask, mask_flag); //0 if the row is empty
@@ -250,21 +247,23 @@ fn spGEMMimpala_device[T](a : CSR[T], b : CSR[T], c : CSR[T], s : Semiring[T]) -
                 while (while_loop) {
 
                     let front_col = if rowPos < b.row_index(bRowId + 1:u32) {b.cols(rowPos) + 1:u32} else {0:u32};
-                    let front_val = if rowPos < b.row_index(bRowId + 1:u32) {b.values(rowPos)} else {s.zero()};
+                    let front_val = if rowPos < b.row_index(bRowId + 1:u32) {b.values(rowPos)} else {s.zero};
 
                     let mut frontColMin = WarpMin(mask,front_col);
                     frontColMin = cuda_warp_shfl_u32(mask, frontColMin, cuda_popc_u32(mask) - 1, 32);
                     
                     if front_col == frontColMin {
                         rowPos = rowPos + 1:u32;
-                        tmp = s.multiply(front_val,row_weight); //todo semiring
+                        tmp = s.multiply(front_val,row_weight);
+                        sData(laneId) = tmp; //todo semiring
                     
                     } else {
-                        tmp = s.zero();
+                        tmp = s.zero;
+                        sData(laneId) = tmp;
                     }
 
                     cuda_syncthreads();
-                    let sum = WarpBinOpShared(sData,laneId,cuda_popc_u32(mask) as u32 - 1:u32,s);
+                    let sum = WarpBinOpShared[T](sData,laneId,cuda_popc_u32(mask) as u32 - 1:u32,s);
                 
                     if laneId == 0:u32 {
                         c.values(c.row_index(warpId) as i32 + currentCol as i32) = sum;
@@ -342,7 +341,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
                     GCsrOffsets(GRowIdx + 1) = rowStart;
                 }
                 A1_row_length = A1_row_length + 1:u32;
-                A1Values(A1Val) = s.one();
+                A1Values(A1Val) = s.one;
                 A1Cols(A1Val) = A1Col;
                 A1Col = A1Col + 1:u32;
                 
@@ -354,7 +353,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
         } else {
             A1_row_length = 1:u32;
             GCsrOffsets(GRowIdx + 1) = a.row_index(r+1);
-            A1Values(A1Val) = s.one();
+            A1Values(A1Val) = s.one;
             A1Cols(A1Val) = A1Col;
             
             A1Col = A1Col + 1:u32;    
@@ -384,31 +383,28 @@ fn maxRowLength[T](a : &CSR[T]) -> u32 {
     return(maxRow)
 }
 
-fn spGEMMimpala[T](a : &CSR[T], b : &CSR[T],s : Semiring[T])  -> CSR[T] {
+fn spGEMM[T](a : &CSR[T], b : &CSR[T], s : Semiring[T])  -> CSR[T] {
     
     let warpSize = 32:u32;
 
-    let mut res : &CSR[T] = 0 as &CSR[T];
-
     if maxRowLength[T](*a) <= warpSize 
     {
-        res = &spGEMMsimple[T](a,b,s);
+        let res = spGEMMsimple[T](a,b,s);
+        res
     }
     else {
 
         let (a1,g) = spGEMMdecompose[T](*a,s);
-        // let (a2,g2) = spGEMMdecompose(a1);
-        // let (a3,g3) = spGEMMdecompose(a2);
-
+        
         let c = spGEMMsimple[T](&g,b,s); //need to free g
         release_csr_Host[T](&g);
         
-        res = &spGEMMimpala[T](&a1,&c,s);
+        let res = spGEMM[T](&a1,&c,s);
         release_csr_Host[T](&a1);
         release_csr_Host[T](&c);
+        res
     }
 
-    return(*res)
 }
 
 
@@ -485,9 +481,43 @@ fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
 
 }
 
+#[import]
+fn read_csr_f32(path : &[u8]) -> CSR[f32];
+
+#[import]
+fn free_csr_f32(csr : &CSR[f32])->();
+
+#[import]
+fn print_csr_f32(csr : &CSR[f32])->();
+
+#[import]
+fn infinity() -> f32;
+
 #[export]
 fn main() -> i32{
 
-    print_string("Hello\n");
+    let csrA = read_csr_f32("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/input");
+    
+    let s_mult_plus = Semiring[f32] {zero = 0.0:f32, one = 1.0:f32, plus = |x,y| x + y, multiply = |x,y| x * y };
+    
+    let inf = 1111111111111111111111111111111111111111111111111111111.0:f32; // this overflows to infinity;
+    
+    let s_min_plus = Semiring[f32] {zero = inf, one = 1.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
+
+    //apsp
+    let m = csrA.M as i32;
+    let mut i = 1;
+    let mut res : &CSR[f32] = &csrA; 
+
+    while(i < m - 1) {
+        let res_squared = spGEMM[f32](res,res,s_min_plus);
+        release_csr_Host[f32](res);
+        res = &res_squared;
+        i = i + 1;
+    }
+
+    print_csr_f32(res);
+    release_csr_Host[f32](res);
+
     0
 }

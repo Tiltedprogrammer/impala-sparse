@@ -26,8 +26,8 @@ int main(int argc, char ** argv) {
 
     // OK(GrB_init(GrB_BLOCKING));
     
-    std::ifstream isA ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixA_cusparse");
-    std::ifstream isB ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixB_cusparse");
+    std::ifstream isA ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/input");
+    std::ifstream isB ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/output");
     
     // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_003.mtx-out");
     // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_077.mtx-out");
@@ -37,10 +37,24 @@ int main(int argc, char ** argv) {
         
     auto csrA = CSRWrapper<float>(isA);
     auto csrB = CSRWrapper<float>(isB);
+    int m = csrA.N;
 
-    auto csrC_ss = csrA.multiply_suite_sparse(csrB);
 
-    auto csrC_impala = csrA.multiply_cuda(csrB);
+    for(int i = 1; i < m - 1; i *= 2) {
+        csrA = csrA.multiply_suite_sparse(csrA);
+    }
+    // auto csrB = CSRWrapper<float>(isB);
+
+    // auto csrC = csrA.multiply_suite_sparse(csrB);
+
+    assert(csrA == csrB);
+    std::cout << csrA << csrA.M << " " << csrA.nnz << std::endl;
+    std::cout << csrB << csrB.M << " " << csrA.nnz << std::endl;
+    // auto csrB = CSRWrapper<float>(isB);
+
+    // auto csrC_ss = csrA.multiply_suite_sparse(csrB);
+
+    // auto csrC_impala = csrA.multiply_cuda(csrB);
 
     // std::cout << csrC_impala.nnz << std::endl;
     // std::cout << csrC_impala.M << std::endl;
@@ -53,35 +67,9 @@ int main(int argc, char ** argv) {
 
     // auto csrC_impala = csrA.multiply_impala(csrA);
 
-    std::cout << csrC_ss.nnz << std::endl;
-    std::cout << csrC_ss.M << std::endl;
-    std::cout << csrC_ss.N << std::endl;
-
-
-    std::cout << csrC_impala.nnz << std::endl;
-    std::cout << csrC_impala.M << std::endl;
-    std::cout << csrC_impala.N << std::endl;
-    // std::cout << csrC_impala.nnz << std::endl;
-
-    for(auto i : csrC_impala.get_row_index()) {
-        std::cout << i << " ";
-    }
-    std::cout << std::endl;
-
-
-    for(auto i : csrC_ss.get_row_index()) {
-        std::cout << i << " ";
-    }
-    std::cout << std::endl;
     
-    assert(csrC_ss  == csrC_impala);
-    // OK(GrB_finalize());
 }
 
-
-//TODO: handle empty matricies, write impala code up to the end, so the only thing
-// is used from c++ is matrix reader and thrust, todo spmm decompose impala
-// benchmark 
 // think about design e.g.
 /* struct Semiring {
     zero : fn() -> f32, 

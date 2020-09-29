@@ -5,7 +5,7 @@ fn select2[T](cond: bool, a: T, b: T) -> T {
     if cond { a } else { b }
 }
 
-#[export]
+#[import]
 fn infinity() -> f32;
 
 #[export]
@@ -16,6 +16,7 @@ fn main() -> i32 {
     });
     synchronize_cuda(0);
     print_string("Hello\n");
-    print_f32(-infinity());
+    print_f32(infinity());
+    print_f32(1111111111111111111111111111111111111111111111111111111.0:f32);
     0
 }

@@ -16,6 +16,13 @@
 #include <chrono>
 
 
+//malloc
+#include <cstdlib>
+#include <new>      
+#include <fstream>
+    // std::bad_alloc
+
+
 
 
 // CUSPARSE STUFF
@@ -133,6 +140,7 @@ class CSRWrapper{
         CSRWrapper(const CSRWrapper<T>& another);
         ~CSRWrapper() = default;
         struct CSR csr_to_struct() const;
+        struct CSR csr_to_struct_deep() const;
         std::vector<std::unique_ptr<CSRWrapper<T>>> spmmDecompose() const;
         CSRWrapper<T> multiply (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_impala (const CSRWrapper<T>& another) const;
@@ -149,10 +157,12 @@ class CSRWrapper{
         std::vector<T> const get_values() const;
         unsigned int const max_row_length() const;
         //output
+     
         template<typename U>
         friend std::ostream & operator << (std::ostream &out, const CSRWrapper<U> &c);
         template<typename U>
         friend bool operator==(const CSRWrapper<U>& l, const CSRWrapper<U>& r);
+        CSRWrapper<T>& operator = (const CSRWrapper<T>& csr);
     private:
         GraphBLASHandler& gb_handler = GraphBLASHandler::getInstance();
         CSRWrapper<T> multiply_cuda_simple (const CSRWrapper<T>& another) const;
@@ -352,6 +362,22 @@ std::vector<std::unique_ptr<CSRWrapper<float>>> CSRWrapper<float>::spmmDecompose
     return vCsr;
 }
 
+template<typename T>
+CSRWrapper<T>& CSRWrapper<T>::operator = (const CSRWrapper<T>& another) {
+    
+    M = another.M;
+    N = another.N;
+    nnz = another.nnz;
+    
+    values_.reset(new T[nnz]);
+    cols_.reset(new unsigned int[nnz]);
+    row_index_.reset(new unsigned int[M+1]);
+
+    std::copy(another.values_.get(),another.values_.get()+nnz,values_.get());
+    std::copy(another.cols_.get(),another.cols_.get()+nnz,cols_.get());
+    std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());   
+}
+
 
 template<>
 struct CSR CSRWrapper<float>::csr_to_struct() const{
@@ -359,6 +385,32 @@ struct CSR CSRWrapper<float>::csr_to_struct() const{
     return csr;
 }
 
+template<>
+struct CSR CSRWrapper<float>::csr_to_struct_deep() const{
+    auto values_deepcpy = (float*)malloc(sizeof(float) * nnz);
+    if (!values_deepcpy) {
+        throw new std::bad_alloc();
+    }
+
+    auto cols_deepcpy = (unsigned int*)malloc(sizeof(unsigned int) * nnz);
+    if (!cols_deepcpy) {
+        throw new std::bad_alloc();
+    }
+
+    auto csr_offsets_deepcpy = (unsigned int*)malloc(sizeof(unsigned int) * (M + 1));
+    if (!csr_offsets_deepcpy) {
+        throw new std::bad_alloc();
+    }
+
+    std::copy(values_.get(), values_.get()+nnz,values_deepcpy);
+    std::copy(cols_.get(), cols_.get()+nnz,cols_deepcpy);
+    std::copy(row_index_.get(), row_index_.get()+ M + 1,csr_offsets_deepcpy);
+
+    struct CSR csr = CSR{N : N, M : M, nnz : nnz, values : values_deepcpy, cols : cols_deepcpy, row_index : csr_offsets_deepcpy};
+    return csr;
+}
+
+// 
 template<typename T>
 const std::vector<unsigned int> CSRWrapper<T>::get_row_index() const{
     auto csrOffsets = std::vector<unsigned int>();
@@ -599,8 +651,8 @@ CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<floa
     OK(GrB_Matrix_build_FP32(thisA,(const uint64_t*) thisArows,(const uint64_t*)thisAcols,thisAvals,(uint64_t)this->nnz,xop));
     OK(GrB_Matrix_build_FP32(anotherA,(const uint64_t*) anotherArows,(const uint64_t*)anotherAcols,anotherAvals,(uint64_t)another.nnz,xop));
 
-    const GrB_Semiring semiring = GxB_PLUS_TIMES_FP32;
-    // const GrB_Semiring semiring = GxB_MAX_PLUS_FP32;
+    // const GrB_Semiring semiring = GxB_PLUS_TIMES_FP32;
+    const GrB_Semiring semiring = GxB_MIN_PLUS_FP32;
 
 
     OK(GrB_mxm(C,NULL,NULL,semiring,thisA,anotherA,NULL));
