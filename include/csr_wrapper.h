@@ -486,10 +486,6 @@ CSRWrapper<float> CSRWrapper<float>::multiply (const CSRWrapper<float>& another)
     mkl_sparse_destroy(mkl_this);
     mkl_sparse_destroy(mkl_another);
 
-    // delete[] values_tmp;
-    // delete[] rows_tmp;
-    // delete[] cols_tmp;
-
 
     return CSRWrapper(rows,cols,nnz,std::move(values_out),std::move(cols_out),std::move(rows_out));
     //multiply subtract unique_ptr
@@ -855,21 +851,7 @@ bool operator==(const CSRWrapper<T>& l, const CSRWrapper<T>& r)
                 maxC_ij = var;
             }
         }
-        // if (l.nnz == r.nnz)
-        // {
-        //     for (size_t i = 0; i < l.nnz; i++)
-        //     {
-        //         float var = std::abs(l.values_[i] - r.values_[i]);
-        //         if(var > maxC_ij){
-        //             maxC_ij = var;
-        //         }
-        //     }
-        //     return maxC_ij < 0.001;
-            
-        // } else
-        // {
-        //     return false;
-        // }
+
         return maxC_ij < 0.00001;
         
         

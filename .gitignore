@@ -2,3 +2,4 @@
 *.out
 *.code-workspace
 matrix_data/*
+!matrix_data/apsp/

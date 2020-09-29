@@ -23,15 +23,9 @@ namespace fs = std::filesystem;
 int main(int argc, char ** argv) {
 
     GrB_Info info;
-
-    // OK(GrB_init(GrB_BLOCKING));
     
     std::ifstream isA ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/input");
     std::ifstream isB ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/output");
-    
-    // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_003.mtx-out");
-    // std::ifstream oscii_dcop_46("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/$as-caida_G_077.mtx-out");
-
    
     //init graphBlass:
         
@@ -43,30 +37,10 @@ int main(int argc, char ** argv) {
     for(int i = 1; i < m - 1; i *= 2) {
         csrA = csrA.multiply_suite_sparse(csrA);
     }
-    // auto csrB = CSRWrapper<float>(isB);
-
-    // auto csrC = csrA.multiply_suite_sparse(csrB);
 
     assert(csrA == csrB);
     std::cout << csrA << csrA.M << " " << csrA.nnz << std::endl;
     std::cout << csrB << csrB.M << " " << csrA.nnz << std::endl;
-    // auto csrB = CSRWrapper<float>(isB);
-
-    // auto csrC_ss = csrA.multiply_suite_sparse(csrB);
-
-    // auto csrC_impala = csrA.multiply_cuda(csrB);
-
-    // std::cout << csrC_impala.nnz << std::endl;
-    // std::cout << csrC_impala.M << std::endl;
-
-    // std::cout << "C csr offsets: ";
-    // for (int i = 0; i < csrC_impala.M + 1; i++) {
-    //     std::cout << csrC_impala.get_row_index()[i] << " ";
-    // }
-    // std::cout << std::endl;
-
-    // auto csrC_impala = csrA.multiply_impala(csrA);
-
     
 }
 
@@ -80,8 +54,3 @@ int main(int argc, char ** argv) {
 
 // Maybe change intel mkl for suite sparse graphblas
 // abstract over implementation of multiplication and matrix representation
-// PRESENTATION 
-
-//rewrite impala add graphblas
-
-//benchmark
