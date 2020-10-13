@@ -22,6 +22,8 @@
 #include <fstream>
     // std::bad_alloc
 
+#include <cstring>
+
 
 
 
@@ -139,6 +141,7 @@ class CSRWrapper{
         CSRWrapper(unsigned int m, unsigned int n, unsigned int nnz, std::unique_ptr<T[]> values,std::unique_ptr<unsigned int[]> cols,std::unique_ptr<unsigned int[]> rows);
         CSRWrapper(const CSRWrapper<T>& another);
         ~CSRWrapper() = default;
+        CSRWrapper<bool> csr_to_bool() const;
         struct CSR csr_to_struct() const;
         struct CSR csr_to_struct_deep() const;
         std::vector<std::unique_ptr<CSRWrapper<T>>> spmmDecompose() const;
@@ -378,7 +381,21 @@ CSRWrapper<T>& CSRWrapper<T>::operator = (const CSRWrapper<T>& another) {
     std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());   
 }
 
+template<typename T>
+CSRWrapper<bool> CSRWrapper<T>::csr_to_bool() const {
+    
+    auto cols = std::unique_ptr<unsigned int[]>(new unsigned int[nnz]);
+    auto values = std::unique_ptr<bool[]>(new bool [nnz]);
+    auto csr_offsets = std::unique_ptr<unsigned int[]>(new unsigned int [M + 1]);
 
+    std::copy(cols_.get(),cols_.get()+nnz,cols.get());
+    std::copy(row_index_.get(),row_index_.get()+M+1,csr_offsets.get());
+    std::memset(values.get(), 1, sizeof(bool) * nnz);
+
+    return CSRWrapper<bool>(M,N, nnz, std::move(values), std::move(cols),std::move(csr_offsets));
+
+
+} 
 template<>
 struct CSR CSRWrapper<float>::csr_to_struct() const{
     struct CSR csr = CSR{N : N, M : M, nnz : nnz, values : values_.get(), cols : cols_.get(), row_index : row_index_.get()};
@@ -722,6 +739,139 @@ CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<floa
     // OK(GrB_finalize ( )) ;
 
     return CSRWrapper(this->M,another.N,Cnnz,std::move(Cvals),std::move(Ccols),std::move(Crows));
+
+}
+
+template<>
+CSRWrapper<bool> CSRWrapper<bool>::multiply_suite_sparse(const CSRWrapper<bool>& another) const{
+    
+
+    GrB_Info info ;
+
+    //this graphblass
+
+    GrB_Matrix thisA, anotherA, C;
+
+    OK(GrB_Matrix_new(&thisA,GrB_BOOL,this->M,this->N));
+    OK(GrB_Matrix_new(&anotherA,GrB_BOOL,another.M,another.N));
+    OK(GrB_Matrix_new(&C,GrB_BOOL,this->M,another.N));
+    //get tuples for row, cols, values
+    //copy
+    GrB_Index* thisAcols = new uint64_t[this->nnz];
+    for (uint64_t i = 0; i < this->nnz; i++)
+    {
+        thisAcols[i] = this->cols_.get()[i];
+    }
+    
+    const bool* thisAvals = this->values_.get();
+    // csr_to_tuples
+    GrB_Index* anotherAcols = new uint64_t[another.nnz];
+    
+    for (uint64_t i = 0; i < another.nnz; i++)
+    {
+        anotherAcols[i] = another.cols_.get()[i];
+    }
+    
+    const bool* anotherAvals = another.values_.get();
+
+    //row tuples
+    uint64_t* thisArows = new uint64_t[this->nnz];
+    uint64_t* anotherArows = new uint64_t[another.nnz];
+
+    for(uint64_t i = 0, k = 0; i < this->M; i++) {
+
+        for(unsigned int j = this->row_index_.get()[i]; j < this->row_index_.get()[i+1]; j++,k++) {
+            thisArows[k] = i;
+        }
+    }
+
+    for(uint64_t i = 0, k = 0; i < another.M; i++) {
+
+        for(unsigned int j = another.row_index_.get()[i]; j < another.row_index_.get()[i+1]; j++,k++) {
+            anotherArows[k] = i;
+        }
+    }
+
+    GrB_BinaryOp xop = GrB_PLUS_BOOL;
+
+    OK(GrB_Matrix_build_BOOL(thisA,(const uint64_t*) thisArows,(const uint64_t*)thisAcols,thisAvals,(uint64_t)this->nnz,xop));
+    OK(GrB_Matrix_build_BOOL(anotherA,(const uint64_t*) anotherArows,(const uint64_t*)anotherAcols,anotherAvals,(uint64_t)another.nnz,xop));
+
+    // const GrB_Semiring semiring = GxB_PLUS_TIMES_FP32;
+    const GrB_Semiring semiring = GxB_LOR_LAND_BOOL;
+
+
+    OK(GrB_mxm(C,NULL,NULL,semiring,thisA,anotherA,NULL));
+
+    GrB_Index* I;
+    GrB_Index* J;
+    bool* X;
+    GrB_Index Cnnz;
+    OK( GrB_Matrix_nvals(&Cnnz,C));
+    I = new GrB_Index[Cnnz];
+
+    J = new GrB_Index[Cnnz];
+    X = new bool [Cnnz];
+    OK(GrB_Matrix_extractTuples_BOOL(I,J,X,&Cnnz,C));
+
+
+    // std::cout << "C nnz " << Cnnz << std::endl;
+
+    auto Ccols = std::unique_ptr<unsigned int[]>(new unsigned int [Cnnz]);
+    auto Cvals = std::unique_ptr<bool[]>(new bool[Cnnz]);
+    std::copy(J, J + Cnnz,Ccols.get());
+    std::copy(X, X + Cnnz,Cvals.get());
+
+    auto Crows = std::unique_ptr<unsigned int[]>(new unsigned int[this->M + 1]);
+
+    Crows.get()[0] = 0;
+    
+    for (int i = 0; i < Cnnz; i++) {
+        Ccols.get()[i] = J[i];
+        Cvals.get()[i] = X[i];
+    }
+    //csr offsets
+    //test empty row
+    int row_length = 0;
+    
+    for (int r = 0, r_id = 0; r < Cnnz || r_id < this->M;) {
+        if (r < Cnnz && I[r] == r_id) {
+            row_length ++;
+            r++;
+        } else {
+            r_id++;
+            Crows.get()[r_id] = Crows.get()[r_id - 1] + row_length;
+            row_length = 0;    
+        }
+    }
+    // Crows.get()[this->M] = Crows.get()[this->M-1] + row_length;
+    
+    // std::cout << "C csr offsets: ";
+    
+    // for (int i = 0; i < this->M + 1; i++) {
+        // std::cout << Crows.get()[i] << " ";
+    // }
+    // std::cout << std::endl;
+
+
+    //build matricies
+
+    delete [] (thisArows);
+    delete [] (thisAcols);
+    delete[] (anotherArows);
+    delete[] (anotherAcols);
+
+    delete[] (I);
+    delete[] (J);
+    delete[] (X);
+
+    OK(GrB_Matrix_free(&thisA));
+    OK(GrB_Matrix_free(&anotherA));
+    OK(GrB_Matrix_free(&C));
+
+    // OK(GrB_finalize ( )) ;
+
+    return CSRWrapper<bool>(this->M,another.N,Cnnz,std::move(Cvals),std::move(Ccols),std::move(Crows));
 
 }
 

@@ -3,7 +3,10 @@
 find_package(AnyDSLArtic_runtime REQUIRED)
 
 anydsl_runtime_wrap(TEST_ART FILES test.art)
-anydsl_runtime_wrap(SPARSE_ART FILES sparse.art)
+anydsl_runtime_wrap(SPARSE_ART FILES sparse.art main.art)
+
+cuda_add_executable(test_art ${TEST_ART} /home/alexey.tyurin/specialization/impala-worksheet/sparse/artic/intrincics.cpp)
+target_link_libraries(test_art ${AnyDSL_runtime_LIBRARIES})
 
 
 message("${AnyDSLArtic_runtime_DIR}")

@@ -16,7 +16,7 @@ fn main() -> i32 {
     });
     synchronize_cuda(0);
     print_string("Hello\n");
-    print_f32(infinity());
-    print_f32(1111111111111111111111111111111111111111111111111111111.0:f32);
+    print_i64(sizeof[bool]());
+    print_string("\n");
     0
 }

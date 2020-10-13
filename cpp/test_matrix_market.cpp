@@ -15,34 +15,85 @@
 #include <chrono>
 
 #include <GraphBLAS.h>
-// TODO UNIQUEPTR
 
 namespace fs = std::filesystem;
 
-
-int main(int argc, char ** argv) {
-
-    GrB_Info info;
+void APSPexample(std::string& path) {
+    std::ifstream isA (path);
     
-    std::ifstream isA ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/input");
-    std::ifstream isB ("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/output");
-   
-    //init graphBlass:
-        
     auto csrA = CSRWrapper<float>(isA);
-    auto csrB = CSRWrapper<float>(isB);
+
     int m = csrA.N;
 
 
     for(int i = 1; i < m - 1; i *= 2) {
         csrA = csrA.multiply_suite_sparse(csrA);
     }
-
-    assert(csrA == csrB);
-    std::cout << csrA << csrA.M << " " << csrA.nnz << std::endl;
-    std::cout << csrB << csrB.M << " " << csrA.nnz << std::endl;
     
 }
+
+void CONNECTIVITYexample(std::string& path) {
+
+    std::ifstream isA (path);
+    auto csrA = CSRWrapper<float>(isA);
+    auto csrAbool = csrA.csr_to_bool();
+    auto csrB = csrAbool.multiply_suite_sparse(csrAbool);
+}
+
+double avg(std::vector<int64_t> &times){
+    
+    double avg = 0.0;
+
+    for (auto i : times) {
+        avg += (double)i;
+    }
+
+    return avg / times.size();
+}
+
+double dev(std::vector<int64_t> &times, double avg) {
+    
+    double dev = 0.0;
+
+    for (auto i : times) {
+        dev += ((double)i - avg) * ((double)i - avg);
+    }
+
+    dev /= times.size();
+
+    return std::sqrt(dev);
+}
+
+template<typename Func>
+void benchmark(Func f,int num_iter, std::string& path) {
+    //dry run
+    f(path);
+
+    auto times = std::vector<int64_t>();
+
+    for (int i = 0; i < num_iter; i++){
+        auto start = std::chrono::steady_clock::now();
+        f(path);
+        auto end = std::chrono::steady_clock::now();
+        times.push_back(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+    }
+
+    //avg
+    double avg_ = avg(times);
+    //dev
+    double dev_ = dev(times,avg_);
+
+    std::cout << "Timing: " << num_iter << " runs | Average: " << avg_ / 1000.0 << "ms | Deviation: " << dev_/1000.0 << "ms" << std::endl;
+    
+}
+
+int main(int argc, char ** argv) {
+
+    std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/mt2010.mtx";
+    benchmark(CONNECTIVITYexample,4,path);
+}
+
+//select some matrix data and make python script to collect run times and buid a graph.
 
 // think about design e.g.
 /* struct Semiring {

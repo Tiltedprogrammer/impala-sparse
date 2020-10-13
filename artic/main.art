@@ -1,0 +1,159 @@
+#[import]
+fn read_csr_f32(&[u8],&u32,&u32,&u32,&(&mut[u32]),&(&mut[u32]),&(&mut[f32])) -> ();
+
+#[import]
+fn read_csr_u8(&[u8],&u32,&u32,&u32,&(&mut[u32]),&(&mut[u32]),&(&mut[u8])) -> ();
+
+
+fn csr_f32(path : &[u8]) -> CSR[f32] {
+    
+    let mut csrA_N = 0 : u32;
+    let mut csrA_M = 0 : u32;
+    let mut csrA_nnz = 0 : u32;
+    let mut csrA_values = 0 as &mut [f32];
+    let mut csrA_csr_offsets = 0 as &mut [u32]; 
+    let mut csrA_cols = 0 as &mut [u32];
+
+    read_csr_f32(path,&csrA_M,&csrA_N,&csrA_nnz,&csrA_cols,&csrA_csr_offsets,&csrA_values);
+
+    CSR[f32] {N = csrA_N, M = csrA_M, nnz = csrA_nnz, values = csrA_values, cols = csrA_cols, row_index = csrA_csr_offsets}
+}
+
+fn csr_u8(path : &[u8]) -> CSR[u8] {
+    
+    let mut csrA_N = 0 : u32;
+    let mut csrA_M = 0 : u32;
+    let mut csrA_nnz = 0 : u32;
+    let mut csrA_values = 0 as &mut [u8];
+    let mut csrA_csr_offsets = 0 as &mut [u32]; 
+    let mut csrA_cols = 0 as &mut [u32];
+
+    read_csr_u8(path,&csrA_M,&csrA_N,&csrA_nnz,&csrA_cols,&csrA_csr_offsets,&csrA_values);
+
+    CSR[u8] {N = csrA_N, M = csrA_M, nnz = csrA_nnz, values = csrA_values, cols = csrA_cols, row_index = csrA_csr_offsets}
+}
+
+
+fn print_csr[T](csr : CSR[T], print_fun : fn(T) -> ())->() {
+
+    for i in range(0,csr.nnz as i32) {
+        print_fun(csr.values(i));
+        print_string(" ");
+    }
+    print_string("\n");
+
+    for i in range(0,csr.nnz as i32) {
+        print_u32(csr.cols(i));
+        print_string(" ");
+    }
+    print_string("\n");
+    for i in range(0,csr.M as i32 + 1) {
+        print_u32(csr.row_index(i));
+        print_string(" ");
+    }
+    print_string("\n");
+
+}
+
+
+
+#[import]
+fn infinity() -> f32;
+
+fn APSPexample(path : &[u8]) -> () {
+    let csrA = csr_f32(path);
+    
+    let inf = 1111111111111111111111111111111111111111111111111111111.0:f32; // this overflows to infinity;
+    
+    let s_min_plus = Semiring[f32] {zero = inf, one = 1.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
+
+    //apsp
+    let m = csrA.M as i32;
+    let mut i = 1;
+    let mut res : &CSR[f32] = &csrA; 
+
+    while(i < m - 1) {
+        let res_squared = spGEMM[f32](res,res,s_min_plus);
+        release_csr_Host[f32](res);
+        res = &res_squared;
+        i = i + 1;
+    }
+
+    // print_csr[f32](*res,|f| print_f32(f));
+    release_csr_Host[f32](res);
+}
+
+fn CONNECTIVITYexample(path : &[u8]) -> () {
+    let csrA = csr_u8(path);
+    
+    let s_lor_land = Semiring[u8] {zero = 0 : u8, one = 1 : u8, plus = |x, y| x | y, multiply = |x, y| x & y };
+
+    let res = spGEMM[u8](&csrA,&csrA,s_lor_land);
+    
+    release_csr_Host[u8](csrA);
+    
+    // print_csr[u8](res,|u : u8| print_i32(u as i32));
+    
+    release_csr_Host[u8](res);
+    
+}
+
+fn avg(arr : &[i64], num_iter : i32) -> f64 {
+    
+    let mut avg = 0.0 : f64;
+
+    for i in range(0, num_iter) {
+        avg = avg + (arr(i) as f64);
+    }
+
+    return(avg/(num_iter as f64))
+}
+
+//square root of variance
+fn dev(arr : &[i64], avg: f64, num_iter : i32) -> f64 {
+    
+    let mut dev = 0.0 : f64;
+    
+    for i in range(0,num_iter) {
+        dev = dev + (arr(i) as f64 - avg) * (arr(i) as f64 - avg);
+    }
+    dev = dev / num_iter as f64;
+    return(cpu_sqrt(dev))
+}
+
+fn @benchmark(get_time: fn() -> i64, num_iter: i32, body: fn() -> ()) -> () {
+    
+    let times_buf = alloc_cpu(num_iter as i64 * sizeof[i64]());
+    let times = bitcast[&mut[i64]](times_buf.data);
+    
+    //dry run
+
+    body();
+
+    for i in range(0, num_iter) {
+        let start = get_time();
+        body();
+        times(i) = get_time() - start;
+    }
+
+    print_string("Timing: ");
+    let avg = avg(times,num_iter);
+    let dev = dev(times,avg,num_iter);
+    print_i32(num_iter);
+    print_string(" runs | Average: ");
+    print_f64(avg / 1000.0);
+    print_string("ms ");
+    print_string("| Deviation: ");
+    print_f64(dev / 1000.0);
+    print_string("ms\n");
+}
+
+#[export]
+fn main() -> i32{
+
+    // APSPexample()
+    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/mt2010.mtx";
+    benchmark(get_micro_time,4, | | CONNECTIVITYexample(path));
+    0
+    // CONNECTIVITYexample()
+}

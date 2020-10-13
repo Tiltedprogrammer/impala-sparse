@@ -8,7 +8,6 @@ struct CSR [T] {
 }
 
 
-
 struct Semiring [T] {
     zero : T,
     one : T,
@@ -117,25 +116,20 @@ fn preprosessRows[T](a : CSR[T], b : CSR[T], cRows : &mut[u32]) -> () {
 
 
     if k > 1:u32 {
-        // grid(0) = 65535;
         if k > 65535:u32 {
             k = 65535;
         }
         grid = (65535 * 32,k as i32,1);
     } else {
         grid = ((a.M as i32) * 32,1,1);
-        // grid(0) = a.M as i32;
     }
-    
-
-    // grid(0) = grid(0) * block(0);
-    
+        
     cuda(0,grid,block, || {
         let full_mask : u32 = 0xffffffff:u32;
 
         let threadId = getThreadId();
 
-        let warpId = threadId / 32; //threadId / 32;
+        let warpId = threadId / 32;
         let laneId = cuda_threadIdx_x() as u32 % 32:u32;
 
         if warpId as u32 < a.M {
@@ -292,7 +286,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
     for r in range(0,a.M as i32) {
         if a.row_index(r+1) - a.row_index(r) > warpSize as u32 {
             let mut rowStart = a.row_index(r);
-            let mut rowEnd = a.row_index(r+1);
+            let rowEnd = a.row_index(r+1);
             while(rowStart < rowEnd) {
                     new_rows = new_rows + 1;
                     rowStart = rowStart + warpSize as u32;
@@ -330,7 +324,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
         if row_length > warpSize as u32 {
 
             let mut rowStart = a.row_index(r);
-            let mut rowEnd = a.row_index(r+1);
+            let rowEnd = a.row_index(r+1);
             
             while(rowStart < rowEnd) {
                 if rowStart + warpSize as u32 > rowEnd {
@@ -369,7 +363,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
     
     (csrA1,csrG)
 }
-
+//is not generic
 fn maxRowLength[T](a : &CSR[T]) -> u32 {
 
     let mut maxRow = 0:u32;
@@ -416,7 +410,7 @@ fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
     copy_csr_toDevice[T](a,&aDevice);
     copy_csr_toDevice[T](b,&bDevice);
 
-    let cDeviceRows = alloc_cuda(0,((*a).M + 1:u32) as i64 * sizeof[i32]());
+    let cDeviceRows = alloc_cuda(0,((*a).N + 1:u32) as i64 * sizeof[i32]());
     
     preprosessRows[T](aDevice,bDevice,cDeviceRows.data as &mut[u32]); 
     
@@ -479,45 +473,4 @@ fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
     
     }
 
-}
-
-#[import]
-fn read_csr_f32(path : &[u8]) -> CSR[f32];
-
-#[import]
-fn free_csr_f32(csr : &CSR[f32])->();
-
-#[import]
-fn print_csr_f32(csr : &CSR[f32])->();
-
-#[import]
-fn infinity() -> f32;
-
-#[export]
-fn main() -> i32{
-
-    let csrA = read_csr_f32("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/input");
-    
-    let s_mult_plus = Semiring[f32] {zero = 0.0:f32, one = 1.0:f32, plus = |x,y| x + y, multiply = |x,y| x * y };
-    
-    let inf = 1111111111111111111111111111111111111111111111111111111.0:f32; // this overflows to infinity;
-    
-    let s_min_plus = Semiring[f32] {zero = inf, one = 1.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
-
-    //apsp
-    let m = csrA.M as i32;
-    let mut i = 1;
-    let mut res : &CSR[f32] = &csrA; 
-
-    while(i < m - 1) {
-        let res_squared = spGEMM[f32](res,res,s_min_plus);
-        release_csr_Host[f32](res);
-        res = &res_squared;
-        i = i + 1;
-    }
-
-    print_csr_f32(res);
-    release_csr_Host[f32](res);
-
-    0
 }
