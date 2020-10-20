@@ -25,17 +25,6 @@
 #include <cstring>
 
 
-
-
-// CUSPARSE STUFF
-// #include <cuda_runtime.h> // cudaMalloc, cudaMemcpy, etc.
-// #include <cusparse.h>         // cusparseSpGEMM
-
-
-// #include "cuda_helpers.cuh"
-
-
-
 #include "matrix_market_reader.h"
 
 #include "sparse.h"
@@ -44,29 +33,17 @@
 #include "mkl.h"
 
 #include "cuda_sparse_wrappers.h"
-// mkl_sparse_s_add(...)
-//  mkl_sparse_spmm
+
 #include "mkl_spblas.h"
 
 
+
+#ifdef SUITE_SPARSE
+
+#pragma message("SUITE_SPARSE BACKEND")
+
 extern "C" {
     #include "GraphBLAS.h"
-}
-
-
-//------------------------------------------------------------------------------
-// CHECK: expr must be true; if not, return an error condition
-//------------------------------------------------------------------------------
-
-// the #include'ing file must define the FREE_ALL macro
-
-#define CHECK(expr,info)                                                \
-{                                                                       \
-    if (! (expr))                                                       \
-    {                                                                   \
-        /* free the result and all workspace, and return NULL */        \
-        printf ("Failure: line %d file %s\n", __LINE__, __FILE__) ;     \
-    }                                                                   \
 }
 
 //------------------------------------------------------------------------------
@@ -76,6 +53,15 @@ extern "C" {
 // OK(method) is a macro that calls a GraphBLAS method and checks the status;
 // if a failure occurs, it handles the error via the CHECK macro above, and
 // returns the error status to the caller.
+
+#define CHECK(expr,info)                                                \
+{                                                                       \
+    if (! (expr))                                                       \
+    {                                                                   \
+        /* free the result and all workspace, and return NULL */        \
+        printf ("Failure: line %d file %s\n", __LINE__, __FILE__) ;     \
+    }                                                                   \
+}
 
 #define OK(method)                                                      \
 {                                                                       \
@@ -89,26 +75,6 @@ extern "C" {
 
 
 
-#define CALL_AND_CHECK_STATUS(function, error_message) do { \
-          switch (function)                                 \
-          {                                                 \
-          case SPARSE_STATUS_SUCCESS:       \
-              /* code */                                    \
-              break;\
-          case SPARSE_STATUS_NOT_INITIALIZED:\
-            std::cout << "The routine encountered an empty handle or matrix array." << std::endl;\
-            break;\
-          case SPARSE_STATUS_ALLOC_FAILED:\
-            std::cout << "Internal memory allocation failed." << std::endl;\
-            break;\
-          case SPARSE_STATUS_INVALID_VALUE:\
-            std::cout << "The input parameters contain an invalid value." << std::endl;\
-          default:\
-            std::cout << "Other error" << std::endl;\
-              break;\
-          }             \
-} while(0)
-//from MM to CSR struct from Impala
 
 
 class GraphBLASHandler {
@@ -132,6 +98,44 @@ class GraphBLASHandler {
             OK(GrB_init(GrB_BLOCKING));
         }
 };
+
+
+#else 
+#pragma message("GRAPHBLAST BACKEND")
+
+#endif
+
+#define CALL_AND_CHECK_STATUS(function, error_message) do { \
+          switch (function)                                 \
+          {                                                 \
+          case SPARSE_STATUS_SUCCESS:       \
+              /* code */                                    \
+              break;\
+          case SPARSE_STATUS_NOT_INITIALIZED:\
+            std::cout << "The routine encountered an empty handle or matrix array." << std::endl;\
+            break;\
+          case SPARSE_STATUS_ALLOC_FAILED:\
+            std::cout << "Internal memory allocation failed." << std::endl;\
+            break;\
+          case SPARSE_STATUS_INVALID_VALUE:\
+            std::cout << "The input parameters contain an invalid value." << std::endl;\
+          default:\
+            std::cout << "Other error" << std::endl;\
+              break;\
+          }             \
+} while(0)
+//from MM to CSR struct from Impala
+
+
+
+//------------------------------------------------------------------------------
+// CHECK: expr must be true; if not, return an error condition
+//------------------------------------------------------------------------------
+
+// the #include'ing file must define the FREE_ALL macro
+
+
+
 //transpose
 template<typename T>
 class CSRWrapper{
@@ -149,7 +153,8 @@ class CSRWrapper{
         CSRWrapper<T> multiply_impala (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cusparse (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cuda (const CSRWrapper<T>& another) const;
-        CSRWrapper<T> multiply_suite_sparse (const CSRWrapper<T>& another) const;
+        CSRWrapper<T> multiply_graphblas (const CSRWrapper<T>& another) const;
+        // CSRWrapper<T> multiply_graphblast (const CSRWrapper<T>& another) const;
 
         CSRWrapper<T> subtract (const CSRWrapper<T>& another) const;
         T get_matrix_elem(int row, int col);
@@ -160,6 +165,7 @@ class CSRWrapper{
         std::vector<T> const get_values() const;
         unsigned int const max_row_length() const;
         //output
+        void write(std::ofstream& os) const;
      
         template<typename U>
         friend std::ostream & operator << (std::ostream &out, const CSRWrapper<U> &c);
@@ -167,7 +173,9 @@ class CSRWrapper{
         friend bool operator==(const CSRWrapper<U>& l, const CSRWrapper<U>& r);
         CSRWrapper<T>& operator = (const CSRWrapper<T>& csr);
     private:
-        GraphBLASHandler& gb_handler = GraphBLASHandler::getInstance();
+    #ifdef SUITE_SPARSE
+        GraphBLASHandler& gb_handler = GraphBLASHandler::getInstance(); //invoked on construction
+    #endif
         CSRWrapper<T> multiply_cuda_simple (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_impala_simple (const CSRWrapper<T>& another) const;
         std::unique_ptr<T[]> values_;
@@ -180,6 +188,9 @@ class CSRWrapper{
 template<typename T>
 CSRWrapper<T>::CSRWrapper(std::ifstream &is) {
     
+    if(!is) {
+        throw new std::runtime_error("Error opening the supplied file"); 
+    }
     matrix_market::reader reader (is);
 
     if (reader) {
@@ -197,7 +208,7 @@ CSRWrapper<T>::CSRWrapper(std::ifstream &is) {
 
             auto col_ids = matrix.get_col_ids ();
             auto row_ids = matrix.get_row_ids ();
-            auto data    = matrix.get_dbl_data ();
+            auto data    = (matrix.get_dbl_data ());
 
             //sort values by rows
             row_index.push_back(0);
@@ -609,10 +620,12 @@ CSRWrapper<float> CSRWrapper<float>::multiply_cusparse(const CSRWrapper<float>& 
 
 }
 
-template<>
-CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<float>& another) const{
-    
 
+
+#ifdef SUITE_SPARSE
+template<>
+CSRWrapper<float> CSRWrapper<float>::multiply_graphblas(const CSRWrapper<float>& another) const{
+    
     GrB_Info info ;
 
     //this graphblass
@@ -711,16 +724,6 @@ CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<floa
             row_length = 0;    
         }
     }
-    // Crows.get()[this->M] = Crows.get()[this->M-1] + row_length;
-    
-    // std::cout << "C csr offsets: ";
-    
-    // for (int i = 0; i < this->M + 1; i++) {
-        // std::cout << Crows.get()[i] << " ";
-    // }
-    // std::cout << std::endl;
-
-
     //build matricies
 
     delete [] (thisArows);
@@ -742,10 +745,10 @@ CSRWrapper<float> CSRWrapper<float>::multiply_suite_sparse(const CSRWrapper<floa
 
 }
 
-template<>
-CSRWrapper<bool> CSRWrapper<bool>::multiply_suite_sparse(const CSRWrapper<bool>& another) const{
-    
 
+template<>
+CSRWrapper<bool> CSRWrapper<bool>::multiply_graphblas(const CSRWrapper<bool>& another) const{
+    
     GrB_Info info ;
 
     //this graphblass
@@ -844,15 +847,7 @@ CSRWrapper<bool> CSRWrapper<bool>::multiply_suite_sparse(const CSRWrapper<bool>&
             row_length = 0;    
         }
     }
-    // Crows.get()[this->M] = Crows.get()[this->M-1] + row_length;
     
-    // std::cout << "C csr offsets: ";
-    
-    // for (int i = 0; i < this->M + 1; i++) {
-        // std::cout << Crows.get()[i] << " ";
-    // }
-    // std::cout << std::endl;
-
 
     //build matricies
 
@@ -869,16 +864,68 @@ CSRWrapper<bool> CSRWrapper<bool>::multiply_suite_sparse(const CSRWrapper<bool>&
     OK(GrB_Matrix_free(&anotherA));
     OK(GrB_Matrix_free(&C));
 
-    // OK(GrB_finalize ( )) ;
-
     return CSRWrapper<bool>(this->M,another.N,Cnnz,std::move(Cvals),std::move(Ccols),std::move(Crows));
 
 }
 
+#else
+
+template<typename T>
+CSRWrapper<T> CSRWrapper<T>::multiply_graphblas(const CSRWrapper<T>& another) const{
+        
+    std::vector<int> c_rows;
+    std::vector<int> c_cols;
+    std::vector<T> c_values;
+
+    spGEMMGraphblast(M,N,nnz,(int*)row_index_.get(),(int*)cols_.get(),values_.get(),
+                    another.M,another.N,another.nnz,(int*)another.row_index_.get(),(int*)another.cols_.get(),another.values_.get(),
+                        c_rows, c_cols, c_values);
+
+    //assume sorted
+    if(c_values.size() != 0){
+
+            auto c_rows_up = std::unique_ptr<unsigned int[]>(new unsigned int[M + 1]);
+            auto c_cols_up = std::unique_ptr<unsigned int[]>(new unsigned int[c_values.size()]);
+            auto c_values_up = std::unique_ptr<T[]>(new T[c_values.size()]);
+        
+            //reduce rows
+            // std::vector<unsigned int> c_rows_reduced;
+            // c_rows_reduced.push_back(0);
+            c_rows_up.get()[0] = 0;
+            
+            for(int r_id = 0, r_size = 0, val_id = 0; r_id < M; r_id++) {
+                while (val_id < c_rows.size() && c_rows[val_id] == r_id) {
+                    r_size++;
+                    val_id++;
+                }
+                // c_rows_reduced.push_back(r_size);
+                c_rows_up.get()[r_id + 1] = r_size;
+            }
+
+            // assert(c_rows_reduced.size() == M + 1);
+            
+            std::copy(c_values.begin(),c_values.end(),c_values_up.get());
+            std::copy(c_cols.begin(),c_cols.end(),c_cols_up.get());
+            // std::copy(c_rows_reduced.begin(),c_rows_reduced.end(),c_rows_up.get());
+            return CSRWrapper<T>(M,another.N,(const unsigned int)c_values.size(),std::move(c_values_up),std::move(c_cols_up),std::move(c_rows_up));
+
+        } else {
+            auto c_rows_up = std::unique_ptr<unsigned int[]>(nullptr);
+            auto c_cols_up = std::unique_ptr<unsigned int[]>(nullptr);
+            auto c_values_up = std::unique_ptr<T[]>(nullptr);
+            return CSRWrapper<T>(M,another.N,(const unsigned int)c_values.size(),std::move(c_values_up),std::move(c_cols_up),std::move(c_rows_up));
+
+        }
+
+    
+}
+#endif
+
+
 template<>
 CSRWrapper<float> CSRWrapper<float>::subtract(const CSRWrapper<float>& another) const{
 
-    if (N != another.N || M != another.M) throw new std::invalid_argument("Numer of colons of the left oparand should match the number of rows of the right one");
+    if (N != another.N || M != another.M) throw new std::invalid_argument("Number of colons of the left oparand should match the number of rows of the right one");
     sparse_matrix_t mkl_this;
     sparse_matrix_t mkl_another;
 
@@ -1007,5 +1054,48 @@ bool operator==(const CSRWrapper<T>& l, const CSRWrapper<T>& r)
         
     }
 
+template<typename T>
+void CSRWrapper<T>::write(std::ofstream& os) const{
+    os << "%%MatrixMarket matrix coordinate real general\n";
+    std::string comment = "%================================================================================="
+                          "\n%\n"
+                          "% This ASCII file represents a sparse MxN matrix with L \n"
+                          "% nonzeros in the following Matrix Market format:\n"
+                          "% +----------------------------------------------+\n"
+                          "% |%%MatrixMarket matrix coordinate real general | <--- header line\n"
+                          "% |%                                             | <--+\n"
+                          "% |% comments                                    |    |-- 0 or more comment lines\n"
+                          "% |%                                             | <--+         \n"
+                          "% |    M  N  L                                   | <--- rows, columns, entries\n"
+                          "% |    I1  J1  A(I1, J1)                         | <--+\n"
+                          "% |    I2  J2  A(I2, J2)                         |    |\n"
+                          "% |    I3  J3  A(I3, J3)                         |    |-- L lines\n"
+                          "% |        . . .                                 |    |\n"
+                          "% |    IL JL  A(IL, JL)                          | <--+\n"
+                          "% +----------------------------------------------+   \n"
+                          "%\n"
+                          "% Indices are 1-based, i.e. A(1,1) is the first element.\n"
+                          "%\n"
+                          "%\n"
+                          "%=================================================================================\n";
+    os << comment;
+    
+    os << M << " " << N << " " << nnz << "\n";
+    
+
+    auto row = row_index_.get();
+    auto col = cols_.get();
+    auto value = values_.get();
+
+    for (int i = 0; i < M; i++) {
+        for (int j = row[i]; j < row[i+1]; j++) {
+            os << "  " << i + 1 << " " << col[j] + 1 << " " << value[j] << "\n";
+        }
+    }
+
+    os << std::flush;
+
+
+}
 
 #endif

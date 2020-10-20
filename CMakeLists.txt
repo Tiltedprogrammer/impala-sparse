@@ -5,7 +5,17 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
 
+find_package(Boost COMPONENTS program_options REQUIRED)
 
+set( BLAST_INCLUDES   "${CMAKE_CURRENT_SOURCE_DIR}/graphblast/ext/moderngpu/include" "${CMAKE_CURRENT_SOURCE_DIR}/graphblast/ext/cub/cub")
+set( mgpu_SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/graphblast/ext/moderngpu/src/mgpucontext.cu ${CMAKE_CURRENT_SOURCE_DIR}/graphblast/ext/moderngpu/src/mgpuutil.cpp)
+
+
+set( CUDA_CUSPARSE_LIBRARY "$ENV{CUDA_HOME}/lib64/libcusparse.so" )
+FILE( GLOB_RECURSE PROJ_HEADERS graphblast/graphblas/*.hpp)
+
+include_directories( ${BLAST_INCLUDES} ${Boost_INCLUDE_DIRS} )
+# cuda_add_library( graphblast ${PROJ_LIBRARIES} ${PROJ_HEADERS} )
 
 #CUDA
 
@@ -77,6 +87,7 @@ endif()
 
 add_subdirectory(matrix_reader)
 
+
 #Main sparse application
 anydsl_runtime_wrap(SPARSE_PROGRAM
     IMPALA_FLAGS ${IMPALA_FLAGS}
@@ -85,6 +96,21 @@ anydsl_runtime_wrap(SPARSE_PROGRAM
 
 
 set(SPARSE_HEADER_FILE sparse)
+
+if(SUITESPARSE) 
+  add_definitions(-DSUITE_SPARSE)
+  set(GRAPHBLASS_EXECUTABLES "")
+  set(GRAPHBLASS_INCLUDE "" )
+  set(GRAPHBLASS_LINK "graphblas")
+
+else()
+  set(GRAPHBLASS_EXECUTABLES "${CMAKE_SOURCE_DIR}/cpp/graphblast_wrappers.cu;${mgpu_SRC_FILES}")
+  set(GRAPHBLASS_INCLUDE "${CMAKE_SOURCE_DIR}/graphblast")
+  set(GRAPHBLASS_LINK "${Boost_LIBRARIES}")
+
+endif()
+
+message("========= ${GRAPHBLASS_EXECUTABLES} ============")
 
 add_subdirectory(cpp)
 add_subdirectory(artic)

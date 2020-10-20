@@ -55,6 +55,21 @@ fn print_csr[T](csr : CSR[T], print_fun : fn(T) -> ())->() {
 
 }
 
+#[import]
+fn write_f32(&[u8],u32,u32,u32,(&mut[u32]),(&mut[u32]),(&mut[f32])) -> ();
+
+#[import]
+fn write_u8(&[u8],u32,u32,u32,(&mut[u32]),(&mut[u32]),(&mut[u8])) -> ();
+
+
+fn write_csr_f32(csr: CSR[f32],path : &[u8]) {
+    write_f32(path,csr.M,csr.N,csr.nnz,csr.cols,csr.row_index,csr.values)
+}
+
+
+fn write_csr_u8(csr: CSR[u8],path : &[u8]) {
+    write_u8(path,csr.M,csr.N,csr.nnz,csr.cols,csr.row_index,csr.values)
+}
 
 
 #[import]
@@ -65,18 +80,24 @@ fn APSPexample(path : &[u8]) -> () {
     
     let inf = 1111111111111111111111111111111111111111111111111111111.0:f32; // this overflows to infinity;
     
-    let s_min_plus = Semiring[f32] {zero = inf, one = 1.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
+    let s_min_plus = Semiring[f32] {zero = inf, one = 0.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
 
     //apsp
     let m = csrA.M as i32;
     let mut i = 1;
     let mut res : &CSR[f32] = &csrA; 
 
-    while(i < m - 1) {
+    while(i < 4 ) {
+
+        print_i32(i);
+        print_string(" csrA nnzs: ");
+        print_u32((*res).nnz);
+        print_string("\n");
+
         let res_squared = spGEMM[f32](res,res,s_min_plus);
         release_csr_Host[f32](res);
         res = &res_squared;
-        i = i + 1;
+        i = i * 2;
     }
 
     // print_csr[f32](*res,|f| print_f32(f));
@@ -96,6 +117,32 @@ fn CONNECTIVITYexample(path : &[u8]) -> () {
     
     release_csr_Host[u8](res);
     
+}
+
+fn TRANSITIVECLOSUREexample(path : &[u8]) -> () {
+    
+    let csrA = csr_u8(path);
+    
+    let s_lor_land = Semiring[u8] {zero = 0 : u8, one = 1 : u8, plus = |x, y| x | y, multiply = |x, y| x & y };
+
+    //apsp
+    let m = csrA.M as i32;
+    
+    let mut i = 1;
+    let mut res : &CSR[u8] = &csrA; 
+
+    while(i < m) {
+
+        let res_squared = spGEMM[u8](res,res,s_lor_land);
+        release_csr_Host[u8](res);
+        res = &res_squared;
+        i = i * 2;
+    }
+
+    // print_csr[f32](*res,|f| print_f32(f));
+    // write_csr_u8(*res,"/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/TRANSITIVECLOSUREexample");
+
+    release_csr_Host[u8](res);
 }
 
 fn avg(arr : &[i64], num_iter : i32) -> f64 {
@@ -152,8 +199,12 @@ fn @benchmark(get_time: fn() -> i64, num_iter: i32, body: fn() -> ()) -> () {
 fn main() -> i32{
 
     // APSPexample()
-    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/mt2010.mtx";
-    benchmark(get_micro_time,4, | | CONNECTIVITYexample(path));
+    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/soc-sign-bitcoin-alpha.mtx";
+    
+    // benchmark(get_micro_time,4, | | CONNECTIVITYexample(path));
+    // APSPexample(path);
+    // let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/matrixA.mtx";
+    APSPexample(path);
     0
     // CONNECTIVITYexample()
 }

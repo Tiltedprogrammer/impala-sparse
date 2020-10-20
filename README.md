@@ -21,6 +21,12 @@
     ├── int_converter.py                # script to convert `integer` matrix_market to `real`
     └── README.md                       # this README
 
+## Brief spGEMM overview
+
+**spGEMM** multiplies two sparse matricies with **A** and **B** being the left and right operands repsectively. The result of mxm multiplication is a matrix which **i-th** row is a linear combination of the all the rows of the right operand with elements of the **i-th** row of the left operand. Given that, the algorithm first precomputes the upper bound of non-zero values of the result. In general, **i-th** CUDA **warp** operates with **i-th** row of the left operand (i.e. each row should contain less than non-zero 32 elements, this restriction could be satisfied by spliting a single spGEMM into a chain of such multipication where left operand satisfies the restriction). `preproseccRows` function calculates the length of each prospective row of the resulting matrix, populating `csr_offsets` device array with is then gets prefix-summed with **thrust**. The multiplication itsellf is performed in a similar way. The illustation could be seen in the figure which has been taken from the paper.
+
+![Image of Yaktocat](Algorithm.png)
+
 ## Artic spGEMM on semiring to do APSP algorithm
 
 ```Rust

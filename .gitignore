@@ -3,3 +3,8 @@
 *.code-workspace
 matrix_data/*
 !matrix_data/apsp/
+matrix_data/apsp/Linux_call_graph
+matrix_data/apsp/Wordnet3
+matrix_data/apsp/foldoc
+matrix_data/apsp/pesa
+matrix_data/apsp/soc-sign-bitcoin-otc

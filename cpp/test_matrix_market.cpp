@@ -14,11 +14,9 @@
 
 #include <chrono>
 
-#include <GraphBLAS.h>
-
 namespace fs = std::filesystem;
 
-void APSPexample(std::string& path) {
+CSRWrapper<float> APSPexample(std::string& path) {
     std::ifstream isA (path);
     
     auto csrA = CSRWrapper<float>(isA);
@@ -26,18 +24,50 @@ void APSPexample(std::string& path) {
     int m = csrA.N;
 
 
-    for(int i = 1; i < m - 1; i *= 2) {
-        csrA = csrA.multiply_suite_sparse(csrA);
+    for(int i = 1; i < m; i *= 2) {
+        std::cout << i << " csrA nnzs: " << csrA.nnz <<  std::endl;
+        csrA = csrA.multiply_graphblas(csrA);
     }
-    
+    return csrA;
 }
 
-void CONNECTIVITYexample(std::string& path) {
+
+void MINPLUSMULTexample(std::string& path) {
+    std::ifstream isA (path);
+    
+    auto csrA = CSRWrapper<float>(isA);
+
+    int m = csrA.N;
+
+    csrA = csrA.multiply_graphblas(csrA);
+    std::cout << "csrA nnzs: " << csrA.nnz << std::endl;
+
+}
+
+
+CSRWrapper<bool> CONNECTIVITYexample(std::string& path) {
 
     std::ifstream isA (path);
     auto csrA = CSRWrapper<float>(isA);
     auto csrAbool = csrA.csr_to_bool();
-    auto csrB = csrAbool.multiply_suite_sparse(csrAbool);
+    auto csrB = csrAbool.multiply_graphblas(csrAbool);
+
+    return csrB;
+}
+
+CSRWrapper<bool> TRANSITIVECLOSUREexample(std::string& path) {
+
+    std::ifstream isA (path);
+    auto csrA = CSRWrapper<float>(isA);
+    auto csrAbool = csrA.csr_to_bool();
+
+    int m = csrA.N;
+
+
+    for(int i = 1; i < m; i *= 2) {
+        csrAbool = csrAbool.multiply_graphblas(csrAbool);
+    }
+    return csrAbool;
 }
 
 double avg(std::vector<int64_t> &times){
@@ -89,8 +119,24 @@ void benchmark(Func f,int num_iter, std::string& path) {
 
 int main(int argc, char ** argv) {
 
-    std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/mt2010.mtx";
-    benchmark(CONNECTIVITYexample,4,path);
+    std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/Linux_call_graph/Linux_call_graph.mtx";
+
+    MINPLUSMULTexample(path);
+
+    // std::ofstream out("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/soc-sign-bitcoin-otc/soc-sign-bitcoin-otc-result.mtx");
+    // csrA.write(out);
+
+    // std::ifstream isB("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/matrixA-res.mtx");
+    // std::ifstream isC("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/matrixB.mtx");
+
+    // auto csrB = CSRWrapper<float>(isB);
+    // auto csrC = CSRWrapper<float>(isC);
+    
+    // assert(csrB == csrC);
+
+
+    // std::cout << csrA;
+
 }
 
 //select some matrix data and make python script to collect run times and buid a graph.

@@ -41,8 +41,8 @@ TEST(TestCudaMultiplicationSimple, Test1) {
             auto csr = CSRWrapper<float>(is);
                  // std::cerr << "Launching test for " << path << std::endl;
             // auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_ss = csr.multiply_suite_sparse(csr);
+            auto csr_cuda = csr.multiply_cusparse(csr);
+            auto csr_ss = csr.multiply_graphblas(csr);
 
             ASSERT_TRUE(csr_cuda == csr_ss);
             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
@@ -68,7 +68,7 @@ TEST(TestCudaMultiplicationComplex, Test1) {
                  // std::cerr << "Launching test for " << path << std::endl;
             // auto csr_cuda = csr.multiply_cuda(csr);
             auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_ss = csr.multiply_suite_sparse(csr);
+            auto csr_ss = csr.multiply_graphblas(csr);
 
             ASSERT_TRUE(csr_cuda == csr_ss);
             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
@@ -81,32 +81,32 @@ TEST(TestCudaMultiplicationComplex, Test1) {
     }
 }
 
-TEST(TestImpala,TestImpalaMultiplicationSimple) {
-    // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
-    TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests");
+// TEST(TestImpala,TestImpalaMultiplicationSimple) {
+//     // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
+//     TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests");
     
-    for (const auto& path : tm.matrix_paths) {
-        if(!fs::is_directory(path)){
-            std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
-                << "Launching test for "<< path << std::endl;
-            std::ifstream is(path);
-            auto csr = CSRWrapper<float>(is);
-                 // std::cerr << "Launching test for " << path << std::endl;
-            // auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_impala = csr.multiply_impala(csr);
-            auto csr_ss = csr.multiply_suite_sparse(csr);
+//     for (const auto& path : tm.matrix_paths) {
+//         if(!fs::is_directory(path)){
+//             std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
+//                 << "Launching test for "<< path << std::endl;
+//             std::ifstream is(path);
+//             auto csr = CSRWrapper<float>(is);
+//                  // std::cerr << "Launching test for " << path << std::endl;
+//             // auto csr_cuda = csr.multiply_cuda(csr);
+//             auto csr_impala = csr.multiply_impala(csr);
+//             auto csr_ss = csr.multiply_suite_sparse(csr);
 
-            ASSERT_TRUE(csr_impala == csr_ss);
-            // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
+//             ASSERT_TRUE(csr_impala == csr_ss);
+//             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
 
             
             
-        } else {
-            ASSERT_TRUE(1==1);
-        }
-    }
+//         } else {
+//             ASSERT_TRUE(1==1);
+//         }
+//     }
 
-}
+// }
 
 
 // TEST(TestImpala,TestImpalaMultiplicationComplex) {

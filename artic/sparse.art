@@ -363,7 +363,7 @@ fn spGEMMdecompose[T](a : CSR[T], s : Semiring[T]) -> (CSR[T],CSR[T]) {
     
     (csrA1,csrG)
 }
-//is not generic
+
 fn maxRowLength[T](a : &CSR[T]) -> u32 {
 
     let mut maxRow = 0:u32;
@@ -379,6 +379,16 @@ fn maxRowLength[T](a : &CSR[T]) -> u32 {
 
 fn spGEMM[T](a : &CSR[T], b : &CSR[T], s : Semiring[T])  -> CSR[T] {
     
+
+    if (*a).nnz == 0 || (*b).nnz == 0 {
+        
+        let cHostValues = alloc_cpu(0 as i64 * sizeof[T]());
+        let cHostCols = alloc_cpu(0 as i64 * sizeof[u32]());
+        let cHostRows = alloc_cpu(0 as i64 * sizeof[u32]());
+        let cHost = CSR[T] {N = (*b).N, M = (*a).M, nnz = 0:u32, values = cHostValues.data as &mut[T], cols = cHostCols.data as &mut[u32], row_index = cHostRows.data as &mut[u32]};
+        return(cHost)
+    }
+
     let warpSize = 32:u32;
 
     if maxRowLength[T](*a) <= warpSize 
@@ -392,7 +402,7 @@ fn spGEMM[T](a : &CSR[T], b : &CSR[T], s : Semiring[T])  -> CSR[T] {
         
         let c = spGEMMsimple[T](&g,b,s); //need to free g
         release_csr_Host[T](&g);
-        
+            
         let res = spGEMM[T](&a1,&c,s);
         release_csr_Host[T](&a1);
         release_csr_Host[T](&c);
@@ -404,23 +414,24 @@ fn spGEMM[T](a : &CSR[T], b : &CSR[T], s : Semiring[T])  -> CSR[T] {
 
 fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
     
+
+    
     let aDevice = CSR[T] {N = (*a).N, M = (*a).M, nnz = (*a).nnz, values = alloc_cuda(0,(*a).nnz as i64 * sizeof[T]()).data as &mut[T], cols = alloc_cuda(0,(*a).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index = alloc_cuda(0,((*a).M + 1:u32) as i64 * sizeof[i32]()).data as &mut[u32]};
     let bDevice = CSR[T] {N = (*b).N, M = (*b).M, nnz = (*b).nnz, values = alloc_cuda(0,(*b).nnz as i64 * sizeof[T]()).data as &mut[T], cols = alloc_cuda(0,(*b).nnz as i64 * sizeof[i32]()).data as &mut[u32], row_index = alloc_cuda(0,((*b).M + 1:u32) as i64 * sizeof[i32]()).data as &mut[u32]};
     
     copy_csr_toDevice[T](a,&aDevice);
     copy_csr_toDevice[T](b,&bDevice);
 
-    let cDeviceRows = alloc_cuda(0,((*a).N + 1:u32) as i64 * sizeof[i32]());
+    let cDeviceRows = alloc_cuda(0,((*a).M + 1:u32) as i64 * sizeof[i32]());
     
     preprosessRows[T](aDevice,bDevice,cDeviceRows.data as &mut[u32]); 
     
     prefixSum(cDeviceRows.data as &mut[u32], (*a).M + 1:u32);
 
-
     let cHostRows = alloc_cpu(((*a).M + 1:u32) as i64 * sizeof[i32]());
     let cHostRowsData = cHostRows.data as &mut[u32];
     cHostRowsData(0) = 0:u32;
-
+    
     
     runtime_copy(runtime_device(1, 0), cDeviceRows.data, 4:i64, runtime_device(0, 0), cHostRowsData as &mut[i8], 4:i64, (aDevice.M) as i64 * sizeof[u32]()); // 4 or 1?
 
@@ -461,13 +472,13 @@ fn spGEMMsimple[T](a : &CSR[T], b : &CSR[T], s : Semiring[T]) -> CSR[T] {
 
 
         //release c
-        runtime_release(runtime_device(1, 0), cDeviceValues.data as &[i8]);
-        runtime_release(runtime_device(1, 0), cDeviceRows.data as &[i8]);
-        runtime_release(runtime_device(1, 0), cDeviceCols.data as &[i8]);
-        //cudaFree
+        // runtime_release(runtime_device(1, 0), cDeviceValues.data as &[i8]);
+        // runtime_release(runtime_device(1, 0), cDeviceRows.data as &[i8]);
+        // runtime_release(runtime_device(1, 0), cDeviceCols.data as &[i8]);
+        // //cudaFree
         release_csr_Device[T](&aDevice);
         release_csr_Device[T](&bDevice);
-        // release_csr_Device(&cDevice);
+        release_csr_Device[T](&cDevice);
         
         return(cHost)    
     

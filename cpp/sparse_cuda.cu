@@ -170,7 +170,7 @@ __global__ void spGEMMDevice(struct CSR a, struct CSR b, struct CSR c) {
     int warpId = threadId / 32; //is rowId
     int laneId = threadIdx.x % 32;
 
-    extern __shared__ float sData[]; //array to reduce sums
+    __shared__ float sData[32]; //array to reduce sums
 
     if(warpId < a.M) {
 
@@ -325,7 +325,7 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
     cDevice.cols = (unsigned int*)dC_columns;
     
     
-    spGEMMDevice<<<grid,32,32>>>(aDevice,bDevice,cDevice);
+    spGEMMDevice<<<grid,32>>>(aDevice,bDevice,cDevice);
 
     cudaDeviceSynchronize();
 

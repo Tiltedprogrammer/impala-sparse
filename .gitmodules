@@ -1,3 +1,6 @@
 [submodule "matrix_reader"]
 	path = matrix_reader
 	url = https://github.com/Tiltedprogrammer/matrix_reader
+[submodule "graphblast"]
+	path = graphblast
+	url = https://github.com/gunrock/graphblast
