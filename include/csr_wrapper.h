@@ -154,7 +154,6 @@ class CSRWrapper{
         CSRWrapper<T> multiply_cusparse (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cuda (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_graphblas (const CSRWrapper<T>& another) const;
-        // CSRWrapper<T> multiply_graphblast (const CSRWrapper<T>& another) const;
 
         CSRWrapper<T> subtract (const CSRWrapper<T>& another) const;
         T get_matrix_elem(int row, int col);
@@ -296,7 +295,7 @@ CSRWrapper<T>::CSRWrapper(const CSRWrapper<T>& another){
     std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());
 }
 
-//reduction of the resulting vector should give the initial matrix
+//reduction of the resulting vector should give the initial matrix : A = A1 * G
 template<>
 std::vector<std::unique_ptr<CSRWrapper<float>>> CSRWrapper<float>::spmmDecompose() const{
     
@@ -522,6 +521,7 @@ CSRWrapper<float> CSRWrapper<float>::multiply (const CSRWrapper<float>& another)
 
 template<>
 CSRWrapper<float> CSRWrapper<float>::multiply_cuda_simple(const CSRWrapper<float>& another) const{
+    
     struct CSR csrA = csr_to_struct();
     struct CSR csrB = another.csr_to_struct();
     struct CSR csrC = {};
@@ -556,7 +556,22 @@ CSRWrapper<float> CSRWrapper<float>::multiply_cuda(const CSRWrapper<float>& anot
     
     int warp_size = 32;
 
-    if(this->max_row_length() <= warp_size) return this->multiply_cuda_simple(another);
+    unsigned int max_row = this->max_row_length();
+
+    // auto csrA = (*this);
+    // auto csrB = another;
+
+    // while (max_row > warp_size)
+    // {
+    //     auto csrV = csrA.spmmDecompose();
+    //     csrB = csrV[0]->multiply_cuda_simple(csrB);
+    //     csrA = (*csrV[1].get());
+    //     max_row = int((max_row + 0.5) / 32);
+    // }
+    // return csrA.multiply_cuda_simple(csrB);
+    
+
+    if(max_row <= warp_size) return this->multiply_cuda_simple(another);
     else {
         auto csrV = this->spmmDecompose();
         auto csrC_tmp = csrV[0]->multiply_cuda_simple(another);

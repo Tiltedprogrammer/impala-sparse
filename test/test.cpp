@@ -42,7 +42,7 @@ TEST(TestCudaMultiplicationSimple, Test1) {
                  // std::cerr << "Launching test for " << path << std::endl;
             // auto csr_cuda = csr.multiply_cuda(csr);
             auto csr_cuda = csr.multiply_cusparse(csr);
-            auto csr_ss = csr.multiply_graphblas(csr);
+            auto csr_ss = csr.multiply_cuda(csr);
 
             ASSERT_TRUE(csr_cuda == csr_ss);
             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
@@ -55,31 +55,31 @@ TEST(TestCudaMultiplicationSimple, Test1) {
     }
 }
 
-TEST(TestCudaMultiplicationComplex, Test1) {
-    // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
-    TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/more_complex_tests");
+// TEST(TestCudaMultiplicationComplex, Test1) {
+//     // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");
+//     TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/more_complex_tests");
     
-    for (const auto& path : tm.matrix_paths) {
-        if(!fs::is_directory(path)){
-            std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
-                << "Launching test for "<< path << std::endl;
-            std::ifstream is(path);
-            auto csr = CSRWrapper<float>(is);
-                 // std::cerr << "Launching test for " << path << std::endl;
-            // auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_cuda = csr.multiply_cuda(csr);
-            auto csr_ss = csr.multiply_graphblas(csr);
+//     for (const auto& path : tm.matrix_paths) {
+//         if(!fs::is_directory(path)){
+//             std::cout << "\033[0;32m" << "[          ] " << "\u001b[35m" 
+//                 << "Launching test for "<< path << std::endl;
+//             std::ifstream is(path);
+//             auto csr = CSRWrapper<float>(is);
+//                  // std::cerr << "Launching test for " << path << std::endl;
+//             // auto csr_cuda = csr.multiply_cuda(csr);
+//             auto csr_cuda = csr.multiply_cuda(csr);
+//             auto csr_ss = csr.multiply_graphblas(csr);
 
-            ASSERT_TRUE(csr_cuda == csr_ss);
-            // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
+//             ASSERT_TRUE(csr_cuda == csr_ss);
+//             // ASSERT_TRUE(csr_cuda.get_cols() == csr_cusparse.get_cols());
 
             
             
-        } else {
-            ASSERT_TRUE(1==1);
-        }
-    }
-}
+//         } else {
+//             ASSERT_TRUE(1==1);
+//         }
+//     }
+// }
 
 // TEST(TestImpala,TestImpalaMultiplicationSimple) {
 //     // TestMatrix tm("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data");

@@ -87,12 +87,7 @@ fn APSPexample(path : &[u8]) -> () {
     let mut i = 1;
     let mut res : &CSR[f32] = &csrA; 
 
-    while(i < 4 ) {
-
-        print_i32(i);
-        print_string(" csrA nnzs: ");
-        print_u32((*res).nnz);
-        print_string("\n");
+    while(i < m ) {
 
         let res_squared = spGEMM[f32](res,res,s_min_plus);
         release_csr_Host[f32](res);
@@ -199,12 +194,12 @@ fn @benchmark(get_time: fn() -> i64, num_iter: i32, body: fn() -> ()) -> () {
 fn main() -> i32{
 
     // APSPexample()
-    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/soc-sign-bitcoin-alpha.mtx";
+    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests/G32.mtx";
     
-    // benchmark(get_micro_time,4, | | CONNECTIVITYexample(path));
+    benchmark(get_micro_time,4, | | APSPexample(path));
     // APSPexample(path);
     // let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/matrixA.mtx";
-    APSPexample(path);
+    // APSPexample(path);
     0
     // CONNECTIVITYexample()
 }

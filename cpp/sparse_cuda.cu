@@ -247,16 +247,23 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
     unsigned int   *dA_csrOffsets, *dA_columns, *dB_csrOffsets, *dB_columns, *dC_csrOffsets, *dC_columns;
     float *dA_values, *dB_values, *dC_values;
     
+    
     CHECK_CUDA( cudaMalloc((void**) &dA_csrOffsets,
                             (aDevice.M + 1) * sizeof(int)) )
-    CHECK_CUDA( cudaMalloc((void**) &dA_columns, aDevice.nnz * sizeof(int))   )
+    
+    CHECK_CUDA( cudaMalloc((void**) &dA_columns, aDevice.nnz * sizeof(int)))
+    
     CHECK_CUDA( cudaMalloc((void**) &dA_values,  aDevice.nnz * sizeof(float)) )
     // allocate B
+    
     CHECK_CUDA( cudaMalloc((void**) &dB_csrOffsets,
                             (bDevice.M + 1) * sizeof(int)) )
+    
     CHECK_CUDA( cudaMalloc((void**) &dB_columns, bDevice.nnz * sizeof(int))   )
+    
     CHECK_CUDA( cudaMalloc((void**) &dB_values,  bDevice.nnz * sizeof(float)) )
     // allocate C offsets
+    
     CHECK_CUDA( cudaMalloc((void**) &dC_csrOffsets,
                             (cDevice.M + 1) * sizeof(int)) )
 
@@ -317,8 +324,9 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
         (1) * sizeof(int), cudaMemcpyDeviceToHost) )
 
     //if zero return empty matrix;
-
+    
     CHECK_CUDA( cudaMalloc((void**) &dC_columns, c->nnz * sizeof(int))   )
+    
     CHECK_CUDA( cudaMalloc((void**) &dC_values,  c->nnz * sizeof(float)) )
 
     cDevice.values = dC_values;
@@ -355,6 +363,7 @@ int spGEMMCuda(struct CSR* a, struct CSR* b, struct CSR* c){
     CHECK_CUDA( cudaFree(dC_csrOffsets) )
     CHECK_CUDA( cudaFree(dC_columns) )
     CHECK_CUDA( cudaFree(dC_values) )
+
 
     return EXIT_SUCCESS;
 

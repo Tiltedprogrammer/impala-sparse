@@ -19,4 +19,9 @@ target_link_libraries(MatrixMarket MatrixMarketReader ${ANYDSL_RUNTIME_LIBRARIES
 target_link_libraries(MatrixMarket ${GRAPHBLASS_LINK})
 target_compile_options(MatrixMarket PUBLIC -Wall -m64)
 
-
+if(NOT SUITESPARSE)
+    cuda_add_executable(gspgemm gspgemm.cu)
+    target_include_directories(gspgemm PUBLIC ${GRAPHBLASS_INCLUDE})
+    target_link_libraries(gspgemm ${GRAPHBLASS_LINK})
+    target_compile_options(MatrixMarket PUBLIC -Wall -m64)
+endif()
