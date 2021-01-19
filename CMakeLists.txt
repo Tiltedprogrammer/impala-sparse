@@ -4,6 +4,7 @@ project(SPARSE LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 find_package(Boost COMPONENTS program_options REQUIRED)
 
@@ -104,9 +105,27 @@ if(SUITESPARSE)
   set(GRAPHBLASS_LINK "graphblas")
 
 else()
-  set(GRAPHBLASS_EXECUTABLES "${CMAKE_SOURCE_DIR}/cpp/graphblast_wrappers.cu;${mgpu_SRC_FILES}")
+  set( PROJ_INCLUDES  "${CMAKE_SOURCE_DIR}/graphblast" "${CMAKE_SOURCE_DIR}/graphblast/ext/moderngpu/include" "${CMAKE_SOURCE_DIR}/graphblast/ext/cub/cub")
+  set( mgpu_SRC_FILES "${CMAKE_SOURCE_DIR}/graphblast/ext/moderngpu/src/mgpucontext.cu" "${CMAKE_SOURCE_DIR}/graphblast/ext/moderngpu/src/mgpuutil.cpp")
+  set( PROJ_HEADERS   "" )
+  set( PROJ_LIBRARIES "" )
+  FILE( GLOB_RECURSE PROJ_HEADERS graphblas/*.hpp)
+
+  # backup
+  set(CUDA_FLAGS "${CUDA_NVCC_FLAGS}")
+  message("cuda flags ${CUDA_NVCC_FLAGS}")
+  cuda_add_library( graphblast ${PROJ_LIBRARIES} ${PROJ_HEADERS} ${mgpu_SRC_FILES})
+  target_link_libraries(graphblast ${CUDA_cusparse_LIBRARY} ${Boost_LIBRARIES})
+  target_include_directories(graphblast PUBLIC ${PROJ_INCLUDES})
+  # set(CUDA_NVCC_FLAGS "${CUDA_FLAGS}")
+  message("cuda flags ${CUDA_NVCC_FLAGS}")
+  target_compile_options(graphblast PRIVATE $<$<COMPILE_LANGUAGE:CUDA>: -arch=sm_35 >) 
+
+
+
+  set(GRAPHBLASS_EXECUTABLES "${CMAKE_SOURCE_DIR}/cpp/graphblast_wrappers.cu;")
   set(GRAPHBLASS_INCLUDE "${CMAKE_SOURCE_DIR}/graphblast")
-  set(GRAPHBLASS_LINK "${Boost_LIBRARIES}")
+  set(GRAPHBLASS_LINK "graphblast")
 
 endif()
 

@@ -147,6 +147,71 @@ extern "C"{
 
     }
 
+    int is_equal(unsigned int a_M, unsigned int a_N, unsigned int a_nnz,unsigned int* a_cols, unsigned int* a_csr_offsets, float* a_values,
+        unsigned int b_M, unsigned int b_N, unsigned int b_nnz,unsigned int* b_cols, unsigned int* b_csr_offsets, float* b_values){
+        
+        
+        if (a_N != b_N || a_M != b_M) throw new std::invalid_argument("Number of colons of the left oparand should match the number of rows of the right one");
+        
+        sparse_matrix_t mkl_this;
+        sparse_matrix_t mkl_another;
+
+        // check tmp arrays
+
+        // auto values_tmp = new float[a_nnz];
+        // auto cols_tmp = new int[a_nnz];
+        // auto rows_tmp = new int[a_M + 1];
+
+        // std::copy(a_values,a_values + a_nnz,values_tmp);
+        // std::copy((int*)a_cols,(int*)a_cols + a_nnz,cols_tmp);
+        // std::copy((int*)a_csr_offsets,(int*)a_csr_offsets + a_M + 1,rows_tmp);
+
+        // CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
+        //  (int*)(row_index_.get()), (int*)(row_index_.get()) + 1, (int*)cols_.get(), values_.get()),"Error\n");
+
+        CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , a_M, a_N,
+        (int*)a_csr_offsets, (int*)a_csr_offsets + 1, (int*)a_cols, a_values),"Error\n");
+        // assert(mkl_this_status == SPARSE_STATUS_SUCCESS);
+        
+        CALL_AND_CHECK_STATUS(
+        mkl_sparse_s_create_csr (&mkl_another, SPARSE_INDEX_BASE_ZERO, b_M, b_N,
+        (int*)b_csr_offsets, (int*)b_csr_offsets + 1, (int*)b_cols, b_values),"Error");
+        // assert(mkl_another_status == SPARSE_STATUS_SUCCESS);
+        // assert(1==2);
+
+        sparse_matrix_t mkl_result;
+        
+        CALL_AND_CHECK_STATUS(mkl_sparse_s_add (SPARSE_OPERATION_NON_TRANSPOSE, mkl_this,-1.0,mkl_another,&mkl_result),"Error");
+        
+        sparse_index_base_t indexing;
+        int rows;
+        int cols;
+        int *rows_start;
+        int *rows_end;
+        int *cols_idx;
+        float *values;
+        sparse_status_t export_result = mkl_sparse_s_export_csr (mkl_result,&indexing, &rows, &cols, &rows_start,&rows_end, &cols_idx, &values);
+        
+        unsigned int nnz = (unsigned int)rows_end[rows-1];
+
+        float maxC_ij = 0.0;
+
+        for(int i = 0; i < nnz; i++) {
+            float var = std::abs(values[i]);
+            if(var > maxC_ij){
+                maxC_ij = var;
+            }
+        }
+      
+        mkl_sparse_destroy(mkl_result);
+        mkl_sparse_destroy(mkl_this);
+        mkl_sparse_destroy(mkl_another);
+
+        if(maxC_ij < 0.00001) return 1;
+        else return 0;
+    
+    }
+
 
 }
 //

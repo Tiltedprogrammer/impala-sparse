@@ -14,6 +14,8 @@
 
 #include <chrono>
 
+int64_t TIME = 0;
+
 namespace fs = std::filesystem;
 
 CSRWrapper<float> APSPexample(std::string& path) {
@@ -53,6 +55,39 @@ CSRWrapper<bool> CONNECTIVITYexample(std::string& path) {
     auto csrB = csrAbool.multiply_graphblas(csrAbool);
 
     return csrB;
+}
+
+CSRWrapper<float> SSSPexample(CSRWrapper<float>& adj, int v) {
+
+    auto V = CSRWrapper<float>(1,adj.M);
+    V.add_element(0,v,0.0);
+    auto V1 = V;
+    int i = 1;
+
+
+    //loop should
+    for (size_t i = 1; i <= 99; i++)
+    {
+        V1 = V;
+        V = V1.multiply_graphblas(adj);
+        TIME += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        // std::cout << i << std::endl;
+        if(V1 == V) {
+            std::cout << "broke " << i << std::endl;
+            break;
+        }
+    }
+    
+    // do {
+    //     V1 = V;
+    //     V = V1.multiply_graphblas(adj);
+    //     i++;
+    //     std::cout << i << "\r" << std::flush;
+    // } while (!(V1 == V) && i < adj.N-1);
+    // std::cout << std::endl;
+    
+
+    return V;
 }
 
 CSRWrapper<bool> TRANSITIVECLOSUREexample(std::string& path) {
@@ -121,20 +156,30 @@ int main(int argc, char ** argv) {
 
     // std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/overflow-tests/soc-sign-Slashdot081106.mtx";
     // std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/soc-sign-bitcoin-alpha.mtx";
-    std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests/G32.mtx";
-
-    benchmark(APSPexample,5,path);
-    // auto csrA = APSPexample(path);
+    // std::string path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests/G32.mtx";
 
 
-    // std::ofstream out("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/apsp/G32-result-graphblas_2.mtx");
-    // csrA.write(out);
+    // APSPexample(path);
+    std::ifstream isA("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/sssp/roadNet-CA-ready.mtx");
+    // std::ifstream isA("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/sssp/fosdem-example.mtx");
+    //    std::ifstream isA("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/pattern/pattern_example");
+    // std::ofstream osA("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/sssp/roadNet-CA-ready.mtx");
+    
+    // auto start = std::chrono::steady_clock::now();
+    auto csrA = CSRWrapper<float>(isA);
+    // auto end = std::chrono::steady_clock::now();
 
-    // std::cout << csrA;
+    std::cout << "Reading finished in " << std::chrono::duration_cast<std::chrono::seconds>(end - start).count() << std::endl;
+    std::cout << "Nnz: " << csrA.nnz << std::endl;
+    // for (int i = 0; i < csrA.N; i++) {
+    //     csrA.add_element(i,i,0.0);
+    // }
+    auto csrB = csrA.multiply_cusparse(csrA);
+    std::cout << "B nnz: " << csrB.nnz << std::endl;
 
+    return 0;
+    
 }
-
-//select some matrix data and make python script to collect run times and buid a graph.
 
 // think about design e.g.
 /* struct Semiring {
@@ -143,6 +188,3 @@ int main(int argc, char ** argv) {
     plus : fn(f32,f32) -> f32,
     multiply : fn(f32,f32) -> f32
 }*/
-
-// Maybe change intel mkl for suite sparse graphblas
-// abstract over implementation of multiplication and matrix representation

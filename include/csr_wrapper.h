@@ -2,6 +2,7 @@
 #define CSR_WRAPPER_H
 
 #include <vector>
+#include <tuple>
 #include <cassert>
 #include <cmath>
 #include <limits>
@@ -35,6 +36,11 @@
 #include "cuda_sparse_wrappers.h"
 
 #include "mkl_spblas.h"
+
+// benchmarking
+
+std::chrono::_V2::steady_clock::time_point start;
+std::chrono::_V2::steady_clock::time_point end;
 
 
 
@@ -142,18 +148,24 @@ class CSRWrapper{
     public:
         unsigned int N, M, nnz; //maybe int64?
         CSRWrapper(std::ifstream &is);
+        CSRWrapper(unsigned int, unsigned int);
         CSRWrapper(unsigned int m, unsigned int n, unsigned int nnz, std::unique_ptr<T[]> values,std::unique_ptr<unsigned int[]> cols,std::unique_ptr<unsigned int[]> rows);
         CSRWrapper(const CSRWrapper<T>& another);
         ~CSRWrapper() = default;
+        
+        void add_element(unsigned int row, unsigned int col, T elem);
         CSRWrapper<bool> csr_to_bool() const;
         struct CSR csr_to_struct() const;
         struct CSR csr_to_struct_deep() const;
+
+        //multiplication stuff
         std::vector<std::unique_ptr<CSRWrapper<T>>> spmmDecompose() const;
         CSRWrapper<T> multiply (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_impala (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cusparse (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_cuda (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_graphblas (const CSRWrapper<T>& another) const;
+        //
 
         CSRWrapper<T> subtract (const CSRWrapper<T>& another) const;
         T get_matrix_elem(int row, int col);
@@ -162,6 +174,11 @@ class CSRWrapper{
         std::vector<unsigned int> const get_row_index() const;
         std::vector<unsigned int> const get_cols() const;
         std::vector<T> const get_values() const;
+
+        const unsigned int* get_coo_rows() const;
+        const unsigned int* get_coo_cols() const;
+        const T* get_coo_values() const;
+
         unsigned int const max_row_length() const;
         //output
         void write(std::ofstream& os) const;
@@ -177,9 +194,17 @@ class CSRWrapper{
     #endif
         CSRWrapper<T> multiply_cuda_simple (const CSRWrapper<T>& another) const;
         CSRWrapper<T> multiply_impala_simple (const CSRWrapper<T>& another) const;
+        
+        //CSR
         std::unique_ptr<T[]> values_;
         std::unique_ptr<unsigned int[]> cols_;
         std::unique_ptr<unsigned int[]> row_index_;
+
+        //COO
+        std::unique_ptr<T[]> coo_values_;
+        std::unique_ptr<unsigned int[]> coo_cols_;
+        std::unique_ptr<unsigned int[]> coo_row_index_;
+
 
 };
 
@@ -190,8 +215,9 @@ CSRWrapper<T>::CSRWrapper(std::ifstream &is) {
     if(!is) {
         throw new std::runtime_error("Error opening the supplied file"); 
     }
+    
     matrix_market::reader reader (is);
-
+    
     if (reader) {
         auto &matrix = reader.matrix();
         auto &meta = matrix.meta;
@@ -199,56 +225,107 @@ CSRWrapper<T>::CSRWrapper(std::ifstream &is) {
         M = meta.rows_count;
         nnz = meta.non_zero_count;
 
+
+        coo_cols_ = std::unique_ptr<unsigned int[]>(new unsigned int[nnz]);
+        coo_row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int[nnz]);
+        coo_values_ = std::unique_ptr<T[]>(new T[nnz]);
+
+        auto data = (T*) matrix.get_data();
+        auto col_ids = matrix.get_col_ids ();
+        auto row_ids = matrix.get_row_ids ();
+
+        std::copy(matrix.get_col_ids(),matrix.get_col_ids()+nnz,coo_cols_.get());
+        std::copy(matrix.get_row_ids(),matrix.get_row_ids()+nnz,coo_row_index_.get());
+        std::copy(data,data+nnz,coo_values_.get());
+
         if(nnz != 0){
 
-            std::vector<T> values = std::vector<T>();
-            auto cols = std::vector<unsigned int>();
-            auto row_index = std::vector<unsigned int>();
+            std::vector<std::tuple<unsigned int, unsigned int, T>> crv;
+            
+            values_ = std::unique_ptr<T[]>(new T[nnz]);
+            cols_ = std::unique_ptr<unsigned int[]>(new unsigned int[nnz]);
+            row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int[M + 1]{0});
+            
 
-            auto col_ids = matrix.get_col_ids ();
-            auto row_ids = matrix.get_row_ids ();
-            auto data    = (matrix.get_dbl_data ());
-
-            //sort values by rows
-            row_index.push_back(0);
-            //for each row
-            for(int r = 0, r_id = 0; r < M; r++){
-                int row_size = 0;
-                auto tmp_cols = std::vector<unsigned int>();
-                auto tmp_values = std::vector<std::pair<unsigned int, T>>();
-                for(int i = 0; i < nnz; i++) {
-                    //could be unordered with respect to columns
-                    if(row_ids[i] == r){
-                        row_size++;
-                        // values.push_back(data[i]);
-                        tmp_values.emplace_back(i,data[i]);
-                        tmp_cols.push_back(col_ids[i]);
-                    }
-                }
-                std::sort(tmp_cols.begin(),tmp_cols.end());
-                std::sort(tmp_values.begin(),tmp_values.end(),
-                    [col_ids] (std::pair<unsigned int, T> const& lhs, std::pair<unsigned int, T> const& rhs) -> bool {
-                        return col_ids[lhs.first] < col_ids[rhs.first];
-                    });
-                
-                cols.insert(cols.end(),tmp_cols.begin(),tmp_cols.end());
-                for(auto &e : tmp_values) {
-                    values.push_back(e.second);
-                }
-                r_id += row_size;
-                row_index.push_back(r_id);
+            for (size_t i = 0; i < nnz; i++)
+            {
+                crv.push_back(std::tuple<unsigned int, unsigned int, T>{row_ids[i],col_ids[i],data[i]});
             }
-            values_ = std::unique_ptr<T[]>(new T[values.size()]);
-            cols_ = std::unique_ptr<unsigned int[]>(new unsigned int[cols.size()]);
-            row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int[row_index.size()]);
 
-            std::copy(values.begin(),values.end(),values_.get());
-            std::copy(cols.begin(),cols.end(),cols_.get());
-            std::copy(row_index.begin(),row_index.end(),row_index_.get());
+            // sort by row and then by column
+            std::sort(crv.begin(),crv.end(),[](const std::tuple<unsigned int, unsigned int, T>& lhs, const std::tuple<unsigned int,unsigned int, T>& rhs) -> bool {
+                        if(std::get<0>(lhs) < std::get<0>(rhs)) return true;
+                        else if (std::get<0>(lhs) == std::get<0>(rhs)) return (std::get<1>(lhs) < std::get<1>(rhs));
+                        else return false;
+                    });
+
+            // for (auto elem : crv) {
+            //     std::cout << "( " << std::get<0>(elem) << " " <<  std::get<1>(elem) << " " <<  std::get<2>(elem) << " )";
+            // } 
+            // std::cout << std::endl;
+            
+            for (size_t r = 0, i = 0; r < M; r++) {
+                
+                while (i < nnz && std::get<0>(crv[i]) == r) {
+
+                    row_index_.get()[r+1]++;
+                    values_.get()[i] = std::get<2>(crv[i]);
+                    cols_.get()[i] = std::get<1>(crv[i]);
+                    i++;
+                }
+                row_index_.get()[r+1] += row_index_.get()[r];
+                
+            }
+            
+            
+            // std::vector<T> values = std::vector<T>();
+            // auto cols = std::vector<unsigned int>();
+            // auto row_index = std::vector<unsigned int>();
+
+            // auto col_ids = matrix.get_col_ids ();
+            // auto row_ids = matrix.get_row_ids ();
+            // //sort values by rows
+            // row_index.push_back(0);
+            // //for each row
+            // for(unsigned int r = 0, r_id = 0; r < M; r++){
+            //     int row_size = 0;
+            //     auto tmp_cols = std::vector<unsigned int>();
+            //     auto tmp_values = std::vector<std::pair<unsigned int, T>>();
+            //     for(unsigned int i = 0; i < nnz; i++) {
+            //         //could be unordered with respect to columns
+            //         if(row_ids[i] == r){
+            //             row_size++;
+            //             // values.push_back(data[i]);
+            //             tmp_values.emplace_back(i,data[i]);
+            //             tmp_cols.push_back(col_ids[i]);
+            //         }
+            //     }
+            //     std::sort(tmp_cols.begin(),tmp_cols.end());
+            //     std::sort(tmp_values.begin(),tmp_values.end(),
+            //         [col_ids] (std::pair<unsigned int, T> const& lhs, std::pair<unsigned int, T> const& rhs) -> bool {
+            //             return col_ids[lhs.first] < col_ids[rhs.first];
+            //         });
+                
+            //     cols.insert(cols.end(),tmp_cols.begin(),tmp_cols.end());
+            //     for(auto &e : tmp_values) {
+            //         values.push_back(e.second);
+            //     }
+            //     r_id += row_size;
+            //     row_index.push_back(r_id);
+            // }
+
+            // std::cout << "Here\n";
+            // values_ = std::unique_ptr<T[]>(new T[values.size()]);
+            // cols_ = std::unique_ptr<unsigned int[]>(new unsigned int[cols.size()]);
+            // row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int[row_index.size()]);
+
+            // std::copy(values.begin(),values.end(),values_.get());
+            // std::copy(cols.begin(),cols.end(),cols_.get());
+            // std::copy(row_index.begin(),row_index.end(),row_index_.get());
         } else {
             values_ = std::unique_ptr<T[]>(nullptr);
             cols_ = std::unique_ptr<unsigned int[]>(nullptr);
-            row_index_ = std::unique_ptr<unsigned int[]>(nullptr);
+            row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int [M+1]{0});
         }
 
     
@@ -263,6 +340,101 @@ CSRWrapper<T>::CSRWrapper(std::ifstream &is) {
     }
     
 }
+
+template<typename T>
+CSRWrapper<T>::CSRWrapper(unsigned int rows, unsigned int cols){
+    
+    M = rows;
+    N = cols;
+    nnz = 0;
+
+    values_ = std::unique_ptr<T[]>(nullptr);
+    cols_ = std::unique_ptr<unsigned int[]>(nullptr);
+    row_index_ = std::unique_ptr<unsigned int[]>(new unsigned int [M+1]{0});
+}
+
+template<typename T>
+void CSRWrapper<T>::add_element(unsigned int row, unsigned int col, T elem) {
+    
+    if(nnz == 0) {
+        nnz++;
+        cols_.reset(new unsigned int[1]);
+        values_.reset(new T[1]);
+
+        cols_.get()[0] = col;
+        values_.get()[0] = elem;
+
+        for (unsigned int i = row+1; i < M+1; i++) {
+            row_index_.get()[i]++;
+        }
+        return;
+    }
+    auto new_cols = std::unique_ptr<unsigned int[]>(new unsigned int[nnz+1]);
+    auto new_values = std::unique_ptr<T[]>(new T[nnz+1]);
+
+    unsigned int row_start = row_index_.get()[row];
+    unsigned int row_end = row_index_.get()[row+1];
+    
+    std::copy(cols_.get(),cols_.get()+row_start,new_cols.get());
+    std::copy(values_.get(),values_.get()+row_end,new_values.get());
+
+    //fill up new non-empty row
+
+    bool inserted = false;
+
+    if(row_start != row_end) {
+
+        for(unsigned int i = row_start; i < row_end; i++) {
+            if(inserted) {
+                new_cols.get()[i] = cols_.get()[i-1];
+                new_values.get()[i] = values_.get()[i-1];
+            } 
+            else {
+                if (cols_.get()[i] < col) {
+                    new_cols.get()[i] = cols_.get()[i];
+                    new_values.get()[i] = values_.get()[i];
+                } else if (cols_.get()[i] == col) {
+                    cols_.get()[i] = col;
+                    values_.get()[i] = elem;
+                    inserted = true;
+                    return;
+                } 
+                else {
+                    new_cols.get()[i] = col;
+                    new_values.get()[i] = elem;
+                    inserted = true;
+                    nnz++;
+                    row_end++;
+                }
+            }
+
+        }
+        if(!inserted) {
+            new_cols.get()[row_end] = col;
+            new_values.get()[row_end] = elem;
+            row_end++;
+            nnz++;
+        }
+    } else { //row empty
+        new_cols.get()[row_start] = col;
+        new_values.get()[row_start] = elem;
+        row_end++;
+        nnz++;
+    }
+
+    //increment rows
+    for (int i = row + 1; i < M+1; i++) {
+         row_index_.get()[i]++;
+    }
+    //copy the rest and move
+
+    std::copy(cols_.get() + row_end - 1, cols_.get() + nnz - 1, new_cols.get() + row_end);
+    std::copy(values_.get() + row_end - 1, values_.get() + nnz - 1, new_values.get() + row_end);
+
+    cols_ = std::move(new_cols);
+    values_ = std::move(new_values);
+
+} 
 
 template<typename T>
 CSRWrapper<T>::CSRWrapper(unsigned int m,
@@ -290,9 +462,17 @@ CSRWrapper<T>::CSRWrapper(const CSRWrapper<T>& another){
     cols_.reset(new unsigned int[nnz]);
     row_index_.reset(new unsigned int[M+1]);
 
+    coo_values_.reset(new T[nnz]);
+    coo_row_index_.reset(new unsigned int[nnz]);
+    coo_cols_.reset(new unsigned int[nnz]);
+
     std::copy(another.values_.get(),another.values_.get()+nnz,values_.get());
     std::copy(another.cols_.get(),another.cols_.get()+nnz,cols_.get());
     std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());
+
+    // std::copy(another.coo_values_.get(),another.coo_values_.get()+nnz,coo_values_.get());
+    // std::copy(another.coo_cols_.get(),another.coo_cols_.get()+nnz,coo_cols_.get());
+    // std::copy(another.row_index_.get(),another.row_index_.get()+nnz,coo_row_index_.get());
 }
 
 //reduction of the resulting vector should give the initial matrix : A = A1 * G
@@ -382,13 +562,22 @@ CSRWrapper<T>& CSRWrapper<T>::operator = (const CSRWrapper<T>& another) {
     N = another.N;
     nnz = another.nnz;
     
+    
     values_.reset(new T[nnz]);
     cols_.reset(new unsigned int[nnz]);
     row_index_.reset(new unsigned int[M+1]);
 
+    coo_values_.reset(new T[nnz]);
+    coo_row_index_.reset(new unsigned int[nnz]);
+    coo_cols_.reset(new unsigned int[nnz]);
+
     std::copy(another.values_.get(),another.values_.get()+nnz,values_.get());
     std::copy(another.cols_.get(),another.cols_.get()+nnz,cols_.get());
-    std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());   
+    std::copy(another.row_index_.get(),another.row_index_.get()+M+1,row_index_.get());
+
+    // std::copy(another.coo_values_.get(),another.coo_values_.get()+nnz,coo_values_.get());
+    // std::copy(another.coo_cols_.get(),another.coo_cols_.get()+nnz,coo_cols_.get());
+    // std::copy(another.row_index_.get(),another.row_index_.get()+nnz,coo_row_index_.get());   
 }
 
 template<typename T>
@@ -441,7 +630,7 @@ struct CSR CSRWrapper<float>::csr_to_struct_deep() const{
 template<typename T>
 const std::vector<unsigned int> CSRWrapper<T>::get_row_index() const{
     auto csrOffsets = std::vector<unsigned int>();
-    for (int i = 0; i < M + 1; i++){
+    for (unsigned int i = 0; i < M + 1; i++){
         csrOffsets.push_back(row_index_[i]);
     }
     return csrOffsets;
@@ -450,19 +639,34 @@ const std::vector<unsigned int> CSRWrapper<T>::get_row_index() const{
 template<typename T>
 const std::vector<unsigned int> CSRWrapper<T>::get_cols() const{
     auto cols = std::vector<unsigned int>();
-    for (int i = 0; i < nnz; i++){
+    for (unsigned int i = 0; i < nnz; i++){
         cols.push_back(cols_[i]);
     }
     return cols;
 }
 
+
 template<typename T>
 const std::vector<T> CSRWrapper<T>::get_values() const{
     auto vals = std::vector<T>();
-    for (int i = 0; i < nnz; i++){
+    for (unsigned int i = 0; i < nnz; i++){
         vals.push_back(values_[i]);
     }
     return vals;
+}
+
+template<typename T>
+const unsigned int* CSRWrapper<T>::get_coo_rows() const {
+    return coo_row_index_.get();
+}
+
+template<typename T>
+const unsigned int* CSRWrapper<T>::get_coo_cols() const {
+    return coo_cols_.get();
+}
+template<typename T>
+const T* CSRWrapper<T>::get_coo_values() const {
+    return coo_values_.get();
 }
 
 template<>
@@ -610,6 +814,7 @@ CSRWrapper<float> CSRWrapper<float>::multiply_impala(const CSRWrapper<float>& an
 
 template<>
 CSRWrapper<float> CSRWrapper<float>::multiply_cusparse(const CSRWrapper<float>& another) const{
+    
     struct CSR csrA = csr_to_struct();
     struct CSR csrB = another.csr_to_struct();
     struct CSR csrC = {};
@@ -695,8 +900,9 @@ CSRWrapper<float> CSRWrapper<float>::multiply_graphblas(const CSRWrapper<float>&
     // const GrB_Semiring semiring = GxB_PLUS_TIMES_FP32;
     const GrB_Semiring semiring = GxB_MIN_PLUS_FP32;
 
-
+    start = std::chrono::steady_clock::now();
     OK(GrB_mxm(C,NULL,NULL,semiring,thisA,anotherA,NULL));
+    end = std::chrono::steady_clock::now();
 
     GrB_Index* I;
     GrB_Index* J;
@@ -946,19 +1152,19 @@ CSRWrapper<float> CSRWrapper<float>::subtract(const CSRWrapper<float>& another) 
 
     // check tmp arrays
 
-    auto values_tmp = new float[nnz];
-    auto cols_tmp = new int[nnz];
-    auto rows_tmp = new int[M + 1];
+    // auto values_tmp = new float[nnz];
+    // auto cols_tmp = new int[nnz];
+    // auto rows_tmp = new int[M + 1];
 
-    std::copy(values_.get(),values_.get()+nnz,values_tmp);
-    std::copy((int*)cols_.get(),(int*)cols_.get()+nnz,cols_tmp);
-    std::copy((int*)row_index_.get(),(int*)row_index_.get()+M+1,rows_tmp);
-
-    // CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
-    //  (int*)(row_index_.get()), (int*)(row_index_.get()) + 1, (int*)cols_.get(), values_.get()),"Error\n");
+    // std::copy(values_.get(),values_.get()+nnz,values_tmp);
+    // std::copy((int*)cols_.get(),(int*)cols_.get()+nnz,cols_tmp);
+    // std::copy((int*)row_index_.get(),(int*)row_index_.get()+M+1,rows_tmp);
 
     CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
-     rows_tmp, rows_tmp + 1, cols_tmp, values_tmp),"Error\n");
+     (int*)(row_index_.get()), (int*)(row_index_.get()) + 1, (int*)cols_.get(), values_.get()),"Error\n");
+
+    // CALL_AND_CHECK_STATUS(mkl_sparse_s_create_csr (&mkl_this, SPARSE_INDEX_BASE_ZERO , M, N,
+    //  rows_tmp, rows_tmp + 1, cols_tmp, values_tmp),"Error\n");
     // assert(mkl_this_status == SPARSE_STATUS_SUCCESS);
     
     CALL_AND_CHECK_STATUS(
@@ -997,9 +1203,9 @@ CSRWrapper<float> CSRWrapper<float>::subtract(const CSRWrapper<float>& another) 
     mkl_sparse_destroy(mkl_this);
     mkl_sparse_destroy(mkl_another);
 
-    delete[] values_tmp;
-    delete[] rows_tmp;
-    delete[] cols_tmp;
+    // delete[] values_tmp;
+    // delete[] rows_tmp;
+    // delete[] cols_tmp;
 
 
     return CSRWrapper(rows,cols,nnz,std::move(values_out),std::move(cols_out),std::move(rows_out));

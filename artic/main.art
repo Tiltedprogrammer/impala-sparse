@@ -4,6 +4,14 @@ fn read_csr_f32(&[u8],&u32,&u32,&u32,&(&mut[u32]),&(&mut[u32]),&(&mut[f32])) -> 
 #[import]
 fn read_csr_u8(&[u8],&u32,&u32,&u32,&(&mut[u32]),&(&mut[u32]),&(&mut[u8])) -> ();
 
+#[import]
+fn is_equal(u32,u32,u32,(&mut[u32]),(&mut[u32]),(&mut[f32]),
+            u32,u32,u32,(&mut[u32]),(&mut[u32]),(&mut[f32])) -> i32;
+
+fn eq_f32(a : CSR[f32], b : CSR[f32]) -> i32 {
+    is_equal(a.M,a.N,a.nnz,a.cols,a.row_index,a.values,
+             b.M,b.N,b.nnz,b.cols,b.row_index,b.values)
+}
 
 fn csr_f32(path : &[u8]) -> CSR[f32] {
     
@@ -74,6 +82,42 @@ fn write_csr_u8(csr: CSR[u8],path : &[u8]) {
 
 #[import]
 fn infinity() -> f32;
+
+fn SSSP_example(a_path : &[u8], v_path : &[u8], num_iter : i32) -> CSR[f32] {
+    
+    let csrA = csr_f32(a_path);
+    
+    let mut csrV = csr_f32(v_path);
+
+    let mut time = 0:i64;
+    
+    let inf = 1111111111111111111111111111111111111111111111111111111.0:f32; // this overflows to infinity;
+    let s_min_plus = Semiring[f32] {zero = inf, one = 0.0:f32, plus = |x, y| if x <= y {x} else {y}, multiply = |x,y| x + y};
+
+    
+    for i in range(1,num_iter) {
+        
+        let start = get_micro_time();
+        let v1 = spGEMM[f32](csrV,csrA,s_min_plus);
+        let end = get_micro_time();
+        time = time + (end - start);
+        if eq_f32(csrV,v1) == 1 {
+            print_string("broke ");
+            print_i32(i);
+            print_string("\n");
+            release_csr_Host[f32](v1);
+            break()
+        }
+        release_csr_Host[f32](csrV);
+        csrV = v1;
+    }
+    release_csr_Host[f32](csrA);
+    print_string("TIME FOR SSSP: ");
+    print_i64(time);
+    print_string("\n");
+    
+    csrV
+}
 
 fn APSPexample(path : &[u8]) -> () {
     let csrA = csr_f32(path);
@@ -194,9 +238,14 @@ fn @benchmark(get_time: fn() -> i64, num_iter: i32, body: fn() -> ()) -> () {
 fn main() -> i32{
 
     // APSPexample()
-    let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests/G32.mtx";
+    let pathA = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/sssp/roadNet-CA.mtx";
+    let pathV = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/artic_sssp/v.mtx";
     
-    benchmark(get_micro_time,4, | | APSPexample(path));
+    let v = SSSP_example(pathA,pathV,100);
+    print_u32(v.nnz);
+    print_string("\n");
+    release_csr_Host[f32](v);
+    // benchmark(get_micro_time,4, | | APSPexample(path));
     // APSPexample(path);
     // let path = "/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/transitive-closure/matrixA.mtx";
     // APSPexample(path);

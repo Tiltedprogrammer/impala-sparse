@@ -8,8 +8,9 @@
 #include <cstdlib>
 
 #include <boost/program_options.hpp>
-
 #include "graphblas/graphblas.hpp"
+#include "graphblas/algorithm/sssp.hpp"
+#include "graphblas/algorithm/common.hpp"
 #include "test/test.hpp"
 
 int main( int argc, char** argv )
@@ -22,40 +23,32 @@ int main( int argc, char** argv )
   graphblas::Index a_num_rows, a_num_cols, a_num_edges;
   graphblas::Index b_num_rows, b_num_cols, b_num_edges;
   char* dat_name;
+  graphblas::Descriptor desc;
 
   // Load A
   std::cout << "loading A" << std::endl;
-  readMtx("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/simple_tests/G1.mtx", &a_row_indices, &a_col_indices,
+  readMtx("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/sssp/roadNet-CA.mtx", &a_row_indices, &a_col_indices,
       &a_values, &a_num_rows, &a_num_cols, &a_num_edges, 0, false);
   graphblas::Matrix<float> a(a_num_rows, a_num_cols);
-  
-  std::cout << a_num_edges << std::endl;
+
+  std::cout << a_num_edges << " " << a_num_rows << std::endl;
 //   std::cout << std::endl;
-//   a.build(&a_row_indices, &a_col_indices, &a_values, a_num_edges, GrB_NULL);
+  a.build(&a_row_indices, &a_col_indices, &a_values, a_num_edges, GrB_NULL);
+  // a.print();
+  // Vector v
+  graphblas::Vector<float> v(a_num_rows);
+  
+  graphblas::algorithm::sssp(&v, &a, 0, &desc);
+  std::vector<float> h_sssp_gpu;
+  CHECK(v.extractTuples(&h_sssp_gpu, &a_num_rows));
+  graphblas::Index v_nnz;
+  v.nvals(&v_nnz);
+  std::cout << v_nnz << std::endl;
+  // v.print();
+  // for(auto e : h_sssp_gpu) {
+  //   std::cout << e << " ";
+  // }
 // //   if(DEBUG) a.print();
-
-//   // Load B
-//   std::cout << "loading B" << std::endl;
-//   readMtx("/home/alexey.tyurin/specialization/impala-worksheet/sparse/matrix_data/matrixB.mtx", &b_row_indices, &b_col_indices,
-//       &b_values, &b_num_rows, &b_num_cols, &b_num_edges, 1, false);
-//   graphblas::Matrix<float> b(b_num_rows, b_num_cols);
-//   b.build(&b_row_indices, &b_col_indices, &b_values, b_num_edges, GrB_NULL);
-// //   if(DEBUG) b.print();
-
-//   //
-//   graphblas::Matrix<float> c(a_num_rows, b_num_cols);
-//   graphblas::Descriptor desc;
-//   desc.descriptor_.debug_ = false;
-//   graphblas::mxm<float,float,float,float>(
-//       &c,
-//       GrB_NULL,
-//       GrB_NULL,
-//       graphblas::PlusMultipliesSemiring<float>(),
-//       &a,
-//       &b,
-//       &desc
-//   );
-//   if(DEBUG) c.print();
 
 
 }
