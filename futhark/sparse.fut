@@ -31,7 +31,7 @@ type csr 't [n] [m] = {values:  [n]t, columns: [n]index, offsets:[m]index}
 --non-lifted type abbreviations may not contain functions
 type^ semiring 't = {add : t->t->t, mult : t->t->t, zero : t}
 
-local let a : csr i32 [3] [4] = {values = [4,2,3], columns = [0,1,2], offsets = [0,1,2,3]}
+--local let a : csr i32 [3] [4] = {values = [4,2,3], columns = [0,1,2], offsets = [0,1,2,3]}
 								     
 --union and intersection of columns of 2 rows of 2 matrices
 local let unionSize [n] [m] (a : [n]index) (b : [m]index) : index =
@@ -189,12 +189,12 @@ let eWiseMult 't [n] [k] [m] (left : csr t [n] [m])
 -- 2 4 0
 -- 0 1 3
 -- 0 0 2
-local let csrA = {values = [2,4,1,3,2], columns = [0i64,1i64,1i64,2i64,2i64], offsets = [0i64,2i64,4i64,5i64]}
+--local let csrA = {values = [2,4,1,3,2], columns = [0i64,1i64,1i64,2i64,2i64], offsets = [0i64,2i64,4i64,5i64]}
 
 -- 1 5 2
 -- 1 0 0
 -- 1 0 0
-local let csrB = {values = [1,5,2,1,1], columns = [0i64,1i64,2i64,0i64,0i64], offsets = [0i64,3i64,4i64,5i64]}
+--local let csrB = {values = [1,5,2,1,1], columns = [0i64,1i64,2i64,0i64,0i64], offsets = [0i64,3i64,4i64,5i64]}
 
 -- eWiseAdd csrA csrB
 -- 3 9 2
