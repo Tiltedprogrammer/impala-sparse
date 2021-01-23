@@ -18,10 +18,15 @@ let csrB = {
 
 let plusTimesSemiring : semiring f64 = {add = (+), mult = (*), zero = 0.0}
 
-let csrC = eWiseAdd (eWiseAdd csrA csrB plusTimesSemiring) csrA plusTimesSemiring
+let csrIntermediate =  (eWiseMult csrA csrB plusTimesSemiring)
+    
+let csrC =
+  let csrIntermediate =  (eWiseAdd csrA csrB plusTimesSemiring)
+  let sizeLeft = length csrIntermediate.values
+  let sizeRight = length csrA.values
+  let rows = length csrIntermediate.offsets
+  in
+  eWiseMult (csrIntermediate :> csr f64 [sizeLeft] [rows])
+	   (csrA :> csr f64 [sizeRight] [rows]) plusTimesSemiring
 
-		--should be
-		-- 3 4 8 1
-		-- 5 0 2 3
-		-- 1 5 4 5
 --let minPlusSemiring

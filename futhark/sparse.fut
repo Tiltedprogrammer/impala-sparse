@@ -201,8 +201,48 @@ local let csrB = {values = [1,5,2,1,1], columns = [0i64,1i64,2i64,0i64,0i64], of
 -- 1 1 3
 -- 1 0 2
 
-
 -- eWiseMult csrA csrB
 -- 2 20 0
 -- 0 0 0
 -- 0 0 0
+let PlusTimesSemiring : semiring f64 = {add = (+), mult = (*), zero = 0.0}
+
+entry eWiseAddEntry [n] [k] [m] (leftValues : [n]f64)
+		                (leftColumns : [n]i64)
+		                (leftOffsets : [m]i64)
+                                (rightValues : [k]f64)
+		                (rightColumns : [k]i64)
+		                (rightOffsets : [m]i64)
+				 : ([]f64,[]i64,[m]i64) =
+  let csrLeft = {values = leftValues, columns = leftColumns, offsets = leftOffsets}
+  let csrRight = {values = rightValues, columns = rightColumns, offsets = rightOffsets}
+  let result = (eWiseAdd csrLeft csrRight PlusTimesSemiring) in
+   (result.values,result.columns,result.offsets)
+
+entry eWiseMultEntry [n] [k] [m] (leftValues : [n]f64)
+		                (leftColumns : [n]i64)
+		                (leftOffsets : [m]i64)
+                                (rightValues : [k]f64)
+		                (rightColumns : [k]i64)
+		                (rightOffsets : [m]i64)
+				 : ([]f64,[]i64,[m]i64) =
+  let csrLeft = {values = leftValues, columns = leftColumns, offsets = leftOffsets}
+  let csrRight = {values = rightValues, columns = rightColumns, offsets = rightOffsets}
+  let result = (eWiseMult csrLeft csrRight PlusTimesSemiring) in
+   (result.values,result.columns,result.offsets)
+
+entry eWiseAddMultEntry [n] [k] [m] (leftValues : [n]f64)
+		                (leftColumns : [n]i64)
+		                (leftOffsets : [m]i64)
+                                (rightValues : [k]f64)
+		                (rightColumns : [k]i64)
+		                (rightOffsets : [m]i64)
+				 : ([]f64,[]i64,[m]i64) =
+  let csrLeft = {values = leftValues, columns = leftColumns, offsets = leftOffsets}
+  let csrRight = {values = rightValues, columns = rightColumns, offsets = rightOffsets}
+  let resultAdd = (eWiseAdd csrLeft csrRight PlusTimesSemiring)
+  let resultSize = length resultAdd.values
+  let resultMult = (eWiseMult (resultAdd :> csr f64 [resultSize] [m]) csrRight PlusTimesSemiring) in
+  
+   (resultMult.values,resultMult.columns,resultMult.offsets)
+
